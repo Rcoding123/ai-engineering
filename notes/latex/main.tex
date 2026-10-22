@@ -1,0 +1,134 @@
+% AI Engineering: Field Notes
+% One chapter ("level") per project. Add a new \input line for each project.
+%
+% Build (from the ai-engineering folder):
+%   pdflatex -output-directory=notes/latex/build notes/latex/main.tex   (run twice for the contents page)
+
+\documentclass[11pt,a4paper]{report}
+
+\usepackage[a4paper,margin=20mm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\renewcommand{\familydefault}{\sfdefault}
+\usepackage[varqu,scaled=0.92]{zi4}
+\usepackage{amsmath,amssymb}
+\usepackage{xcolor}
+\usepackage{pifont}
+\usepackage{booktabs,array,tabularx}
+\usepackage{enumitem}
+\usepackage{parskip}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,calc,decorations.pathreplacing,fit}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepackage{listings}
+\usepackage[most]{tcolorbox}
+\tcbuselibrary{listings}
+\usepackage{titlesec}
+
+% ---------- palette ----------
+\definecolor{ink}{HTML}{1F2328}
+\definecolor{cblue}{HTML}{2B7BB9}
+\definecolor{cgold}{HTML}{D98E04}
+\definecolor{cgreen}{HTML}{2E8B57}
+\definecolor{cred}{HTML}{D64545}
+\definecolor{cteal}{HTML}{138A7E}
+\definecolor{cpurple}{HTML}{7B5CC4}
+\definecolor{cpink}{HTML}{C2409E}
+\definecolor{cgray}{HTML}{6B7280}
+\definecolor{codebg}{HTML}{F6F8FA}
+
+\usepackage[colorlinks=true,linkcolor=cblue,urlcolor=cblue]{hyperref}
+
+\color{ink}
+
+% ---------- small helpers ----------
+\newcommand{\twodigit}[1]{\ifnum#1<10 0\fi#1}
+\newcommand{\badge}[2]{\tikz[baseline=(b.base)]\node[fill=#1,text=white,rounded corners=2pt,inner sep=2.2pt,font=\scriptsize\sffamily\bfseries](b){#2};}
+\newcommand{\cbadge}[2]{\tikz[baseline=(b.base)]\node[draw=#1,fill=#1!10,text=ink,rounded corners=2pt,inner sep=2.2pt,font=\small\ttfamily](b){#2};}
+\newcommand{\xp}[1]{\par\noindent\hfill\badge{cgold}{+#1 XP}\par}
+\newcommand{\cmark}{\textcolor{cgreen}{\ding{51}}}
+\newcommand{\xmark}{\textcolor{cred}{\ding{55}}}
+\newcommand{\warnicon}{\tikz[baseline=-0.6ex]{\fill[cgold] (0,-0.09)--(0.3,-0.09)--(0.15,0.2)--cycle;\node[text=white,font=\tiny\bfseries,inner sep=0] at (0.15,0.025){!};}}
+\newcommand{\code}[1]{\texttt{#1}}
+
+% ---------- callout boxes ----------
+\tcbset{callout/.style={enhanced,breakable,colback=#1!5,colframe=#1,boxrule=0pt,leftrule=3pt,
+  arc=0pt,outer arc=0pt,left=3mm,right=3mm,top=1mm,bottom=1.5mm,
+  fonttitle=\sffamily\bfseries\footnotesize,coltitle=#1,colbacktitle=#1!5,titlerule=0pt,
+  toptitle=1.5mm,bottomtitle=-0.5mm,before skip=3mm,after skip=3mm}}
+\newtcolorbox{keyidea}[1][]{callout=cblue,title={\ding{72}\ \ KEY IDEA#1}}
+\newtcolorbox{trap}[1][]{callout=cgold,title={\warnicon\ \ TRAP CARD#1}}
+\newtcolorbox{boss}[1][]{callout=cred,title={\ding{110}\ \ BOSS FIGHT#1}}
+\newtcolorbox{lab}[1][]{callout=cgreen,title={\ding{115}\ \ LAB RESULT\quad\textmd{measured, not guessed}#1}}
+\newtcolorbox{gamerule}[1][]{callout=cteal,title={\ding{228}\ \ RULE#1}}
+\newtcolorbox{achievement}[1]{callout=cpurple,title={\ding{72}\ \ ACHIEVEMENT UNLOCKED: #1}}
+
+% ---------- code ----------
+\lstdefinestyle{py}{language=Python,basicstyle=\ttfamily\small,keywordstyle=\color{cpurple}\bfseries,
+  stringstyle=\color{cgreen!80!black},commentstyle=\color{cgray}\itshape,showstringspaces=false,
+  columns=fullflexible,keepspaces=true,upquote=true,breaklines=true}
+\newtcblisting{pycode}{listing only,listing options={style=py},enhanced,colback=codebg,
+  colframe=cgray!35,boxrule=0.4pt,arc=2pt,left=2mm,right=2mm,top=0.5mm,bottom=0.5mm,
+  before skip=2mm,after skip=3mm}
+\newtcblisting{rawcode}{listing only,listing options={basicstyle=\ttfamily\footnotesize,
+  columns=fullflexible,keepspaces=true,breaklines=true,upquote=true},enhanced,colback=codebg,
+  colframe=cgray!35,boxrule=0.4pt,arc=2pt,left=2mm,right=2mm,top=0.5mm,bottom=0.5mm,
+  before skip=2mm,after skip=3mm}
+
+% ---------- headings ----------
+\titleformat{\chapter}[display]{\sffamily\bfseries\color{ink}}
+  {\badge{cgold}{\large LEVEL \twodigit{\thechapter}}}{6pt}{\Huge}
+\titleformat{name=\chapter,numberless}[display]{\sffamily\bfseries\color{ink}}{}{0pt}{\Huge}
+\titlespacing*{\chapter}{0pt}{0pt}{14pt}
+\titleformat{\section}{\sffamily\Large\bfseries\color{ink}}{\textcolor{cgold}{\thesection}}{0.6em}{}
+\titleformat{\subsection}{\sffamily\large\bfseries\color{cgray}}{}{0em}{}
+\setcounter{secnumdepth}{1}
+
+\begin{document}
+
+% ================= title page =================
+\begin{titlepage}
+\centering
+\vspace*{8mm}
+{\sffamily\bfseries\fontsize{38}{42}\selectfont AI ENGINEERING}\\[3mm]
+{\Large\sffamily\color{cgray} Field Notes \,\textperiodcentered\, a project-based quest log}\\[14mm]
+
+\begin{tikzpicture}
+  \foreach \i in {1,...,12} {
+    \pgfmathtruncatemacro\row{(\i-1)/6}
+    \pgfmathtruncatemacro\col{\row==0 ? \i-1 : 12-\i}
+    \coordinate (L\i) at (\col*2.85, -\row*3.9);
+  }
+  \draw[line width=2pt,gray!30] (L1)--(L2)--(L3)--(L4)--(L5)--(L6)--(L7)--(L8)--(L9)--(L10)--(L11)--(L12);
+  \foreach \i/\name in {
+      1/LLM API\\Fundamentals, 2/Structured\\Outputs, 3/Evals, 4/Embeddings \&\\Search,
+      5/RAG, 6/Tool Use, 7/Agents, 8/MCP\\Server, 9/Fine-Tuning, 10/Multimodal,
+      11/Production\\\& LLMOps, 12/Capstone} {
+    \ifnum\i=1
+      \node[circle,minimum size=12mm,fill=cgold,text=white,font=\sffamily\bfseries\large] at (L\i) {\twodigit{\i}};
+    \else
+      \node[circle,minimum size=12mm,draw=gray!50,line width=1.2pt,fill=white,text=gray,font=\sffamily\bfseries\large] at (L\i) {\twodigit{\i}};
+    \fi
+    \node[below=7mm,font=\footnotesize\sffamily,align=center,text width=2.6cm] at (L\i) {\name};
+  }
+  \node[above=7mm,font=\scriptsize\sffamily\bfseries,text=cgold] at (L1) {YOU ARE HERE};
+\end{tikzpicture}
+
+\vfill
+\begin{tabular}{@{}l l@{}}
+  \badge{cblue}{KEY IDEA} & the concept to remember \\[2pt]
+  \badge{cteal}{RULE} & how to do it right \\[2pt]
+  \badge{cgold}{TRAP CARD} & a mistake that actually happened \\[2pt]
+  \badge{cred}{BOSS FIGHT} & the hard part of a level \\[2pt]
+  \badge{cgreen}{LAB RESULT} & numbers measured in our own runs \\[2pt]
+  \badge{cpurple}{ACHIEVEMENT} & what you can now do \\
+\end{tabular}
+\vspace*{8mm}
+\end{titlepage}
+
+\tableofcontents
+
+\input{p01-llm-api-fundamentals}
+
+\end{document}
