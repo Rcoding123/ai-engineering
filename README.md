@@ -54,7 +54,6 @@ Streaming improves what the user feels, which is time to first text, but not tot
   step*_*.py           one file per step: objectives, my code, experiment answers
   rebuild/             steps 1–2 rewritten from scratch from objectives only
 02-… 12-…              later projects, same structure
-Agents-LangGraph/      early ReAct agent experiment, to be reworked in Project 07
 notes/                 LaTeX study notes, one chapter per project (built PDF in notes/)
 ```
 

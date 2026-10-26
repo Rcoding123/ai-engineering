@@ -8,8 +8,8 @@ for a tool, your code runs it, you send the result back, the model continues.
 Requirements:
   - One tool: a calculator that evaluates arithmetic expressions safely.
     It must NOT run arbitrary Python (no eval/exec on model output).
-  - Use the API's native tool-use feature (not text parsing like the
-    Agents-LangGraph file).
+  - Use the API's native tool-use feature (not parsing actions out of
+    the model's text).
   - Write the loop yourself with the raw SDK, no helper that runs it for you.
   - The loop ends when the model stops asking for tools, with a maximum number
     of iterations as a safety limit.
