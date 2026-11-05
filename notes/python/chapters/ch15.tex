@@ -1,0 +1,814 @@
+\chapter{Testing}
+
+\tikzset{pbox/.style={draw=cgray,fill=cgray!8,rounded corners=2pt,font=\sffamily\small,
+    inner sep=4pt,align=center},
+  parr/.style={-{Stealth[length=2mm]},thick,cgray}}
+
+Even a tiny change can break code that used to work. A test is a small program that calls your code with
+known input and checks the output, so a break shows up in seconds, not in production. This chapter covers
+the tools that check code without running it (linters), the two standard-library test tools, \code{pytest}
+(the one you will use), plus fakes for API calls, property tests and automation.
+
+% ------------------------------------------------------------
+\section{The ladder of checks}
+
+Printing values and eyeballing them does not scale. Use layers, cheapest first:
+
+\begin{center}
+%%MD-BEGIN
+% ```mermaid
+% flowchart LR
+%     A["write code"] --> B["linter<br/>ruff / pylint<br/>no run"]
+%     B --> C["type checker<br/>mypy<br/>no run"]
+%     C --> D["tests<br/>pytest / unittest<br/>runs your code"]
+%     D --> E["CI<br/>all of it, every push"]
+% ```
+%%MD-END
+\begin{tikzpicture}[node distance=5mm]
+  \node[pbox,draw=cblue,fill=cblue!10] (a) {write\\code};
+  \node[pbox,right=of a] (b) {\textbf{linter}\\{\footnotesize ruff, pylint}\\{\footnotesize \emph{does not run}}};
+  \node[pbox,right=of b] (c) {\textbf{type checker}\\{\footnotesize mypy}\\{\footnotesize \emph{does not run}}};
+  \node[pbox,right=of c,draw=cgold,fill=cgold!10] (d) {\textbf{tests}\\{\footnotesize pytest, unittest}\\{\footnotesize \emph{runs your code}}};
+  \node[pbox,right=of d,draw=cgreen,fill=cgreen!10] (e) {\textbf{CI}\\{\footnotesize all checks,}\\{\footnotesize every push}};
+  \foreach \x/\y in {a/b,b/c,c/d,d/e} \draw[parr] (\x)--(\y);
+\end{tikzpicture}
+\end{center}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Layer} & \textbf{Finds} & \textbf{Misses} \\
+\midrule
+Linter & undefined names, unused imports, style problems & wrong logic \\
+Type checker & wrong types passed or returned (Chapter~14) & wrong values \\
+Tests & wrong behaviour on the inputs you thought of & inputs you did not think of \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+% ------------------------------------------------------------
+\section{Linters: Pylint, Pyflakes and Ruff}
+
+A \textbf{linter} reads source code and reports likely errors and style problems without running it.
+Take this three-line file. It has a typo: \code{totl} instead of \code{total}.
+
+\begin{pycode}
+# style1.py
+import os
+total = 1
+print(totl)
+\end{pycode}
+
+Running it would crash with \code{NameError} only when line 3 executes. A linter reports it at once.
+
+\subsection{Ruff (real output)}
+
+\textbf{Ruff} is a very fast linter and formatter written in Rust. Install it with \code{python -m pip install ruff}
+(or \code{uv}). Real output, with its default rule set for this version:
+
+\begin{rawcode}
+> ruff check --output-format concise style1.py
+style1.py:1:1: I001 [*] Import block is un-sorted or un-formatted
+style1.py:1:8: F401 [*] `os` imported but unused
+style1.py:3:7: F821 Undefined name `totl`
+Found 3 errors.
+[*] 2 fixable with `--fix`.
+\end{rawcode}
+
+Read it as \code{file:line:column: CODE message}. \code{F821} is the real bug. The \code{[*]} marks problems Ruff can fix
+itself:
+
+\begin{rawcode}
+> ruff check --fix style1.py           (removes the unused import, keeps the bug)
+\end{rawcode}
+
+Ruff also formats code, like a strict spell-checker for whitespace. Given an untidy file:
+
+\begin{pycode}
+def add(a,b):
+    return a+b
+x=add( 1,2 )
+\end{pycode}
+
+\code{ruff format messy.py} rewrites it to:
+
+\begin{pycode}
+def add(a, b):
+    return a + b
+
+
+x = add(1, 2)
+\end{pycode}
+
+\subsection{Pylint, Pyflakes, pycodestyle}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Tool} & \textbf{Checks} & \textbf{Character} \\
+\midrule
+\code{pyflakes} & errors only: undefined names, unused imports & quick, few opinions \\
+\code{pycodestyle} (was \code{pep8}) & layout against PEP~8: spacing, blank lines & style only \\
+\code{pylint} & errors, style, naming, design smells, and a score out of 10 & thorough and noisy; configure it \\
+\code{ruff} & most of the three above plus a formatter and import sorting & fast; the modern default \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Pylint prefixes each message with a letter: \code{E} error, \code{W} warning, \code{C} convention (style),
+\code{R} refactor, \code{F} fatal. For the file above its report has the shape below
+(\emph{typical form; Pylint is not installed here, so not run}). An \code{E} line is the one to fix first.
+
+\begin{rawcode}
+************* Module style1
+style1.py:1:0: C0114: Missing module docstring (missing-module-docstring)
+style1.py:3:6: E0602: Undefined variable 'totl' (undefined-variable)
+\end{rawcode}
+
+\begin{gamerule}
+Fix errors (\code{E}, \code{F}) first, style later. Do not chase a perfect score. Run \code{ruff check} and
+\code{ruff format} before every commit; your editor can do it on save.
+\end{gamerule}
+
+% ------------------------------------------------------------
+\section{Unittest}
+
+Linters cannot know what your function \emph{should} return. For that, write a test. \code{unittest} is in the
+standard library and needs no install.
+
+\subsection{Arrange, act, assert}
+
+Every test has three steps. The \emph{assertion} is the claim that must be true; if it is not, the test fails.
+
+\begin{center}
+%%MD-BEGIN
+% ```mermaid
+% flowchart LR
+%     A["ARRANGE<br/>text = '  Claude   Haiku '"] --> B["ACT<br/>result = normalize_model_name(text)"]
+%     B --> C["ASSERT<br/>result == 'claude-haiku'"]
+% ```
+%%MD-END
+\begin{tikzpicture}[node distance=9mm]
+  \node[pbox,draw=cblue,fill=cblue!10,text width=4cm] (a) {\textbf{ARRANGE}\\{\ttfamily\footnotesize text = "  Claude   Haiku "}};
+  \node[pbox,right=of a,draw=cgold,fill=cgold!10,text width=4.3cm] (b) {\textbf{ACT}\\{\ttfamily\footnotesize result = normalize\_model\_name(text)}};
+  \node[pbox,right=of b,draw=cgreen,fill=cgreen!10,text width=3.4cm] (c) {\textbf{ASSERT}\\{\ttfamily\footnotesize result == "claude-haiku"}};
+  \draw[parr] (a)--(b); \draw[parr] (b)--(c);
+\end{tikzpicture}
+\end{center}
+
+Here is the function under test, a first and naive version. It makes a model name safe for file names.
+
+\begin{pycode}
+# names.py
+def normalize_model_name(name):
+    return name.lower().replace(" ", "-")
+\end{pycode}
+
+A test class derives from \code{unittest.TestCase}. Each method whose name starts with \code{test} is a test.
+
+\begin{pycode}
+# test_names.py
+import unittest
+
+import names
+
+
+class TestNormalize(unittest.TestCase):
+    def setUp(self):
+        self.fn = names.normalize_model_name   # runs before EACH test
+
+    def tearDown(self):
+        pass                                   # runs after EACH test
+
+    def test_one_word(self):
+        self.assertEqual(self.fn("Haiku"), "haiku")
+
+    def test_two_words(self):
+        self.assertEqual(self.fn("Claude Haiku"), "claude-haiku")
+
+    def test_extra_spaces(self):
+        self.assertEqual(self.fn("  Claude   Haiku "), "claude-haiku")
+
+    def test_rejects_none(self):
+        with self.assertRaises(AttributeError):
+            self.fn(None)
+
+
+if __name__ == "__main__":
+    unittest.main()
+\end{pycode}
+
+\begin{rawcode}
+> python test_names.py
+F...
+======================================================================
+FAIL: test_extra_spaces (__main__.TestNormalize.test_extra_spaces)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "...\test_names.py", line 20, in test_extra_spaces
+    self.assertEqual(self.fn("  Claude   Haiku "), "claude-haiku")
+AssertionError: '--claude---haiku-' != 'claude-haiku'
+- --claude---haiku-
+? --       --     -
++ claude-haiku
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.001s
+
+FAILED (failures=1)
+\end{rawcode}
+
+Read the first line: one character per test, \code{.} passed and \code{F} failed. The \code{-} and \code{+} lines show
+actual and expected, and the \code{?} line points to the differences. The test found a real bug.
+Fix the function, then rerun:
+
+\begin{pycode}
+# names.py, fixed
+def normalize_model_name(name):
+    return "-".join(name.lower().split())    # split() drops all extra spaces
+\end{pycode}
+\begin{rawcode}
+> python test_names.py
+....
+----------------------------------------------------------------------
+Ran 4 tests in 0.000s
+
+OK
+\end{rawcode}
+
+\begin{center}
+%%MD-BEGIN
+% ```mermaid
+% flowchart LR
+%     A["add a test<br/>for a case"] --> B["run: FAIL (red)"]
+%     B --> C["fix the code"]
+%     C --> D["run: PASS (green)"]
+%     D --> A
+% ```
+%%MD-END
+\begin{tikzpicture}[node distance=9mm]
+  \node[pbox] (a) {add a test\\for one case};
+  \node[pbox,right=of a,draw=cred,fill=cred!10] (b) {run:\\\textbf{FAIL}};
+  \node[pbox,right=of b] (c) {fix the\\code};
+  \node[pbox,right=of c,draw=cgreen,fill=cgreen!10] (d) {run:\\\textbf{PASS}};
+  \draw[parr] (a)--(b); \draw[parr] (b)--(c); \draw[parr] (c)--(d);
+  \draw[parr] (d.north) to[bend right=35] node[above,font=\scriptsize\sffamily]{next case} (a.north);
+\end{tikzpicture}
+\end{center}
+
+\begin{typecheck}
+A test class is a \emph{class} (Chapter~11) inheriting \code{TestCase}; \code{self.assertEqual(a, b)} is an inherited method.
+It prints the difference when \code{a != b}. Plain \code{assert a == b} also works in unittest, but its failure message is poor.
+\end{typecheck}
+
+\begin{center}
+\begin{tabular}{@{}l l@{}}
+\toprule
+\textbf{Method} & \textbf{Passes when} \\
+\midrule
+\code{assertEqual(a, b)} & \code{a == b} \\
+\code{assertTrue(x)} / \code{assertFalse(x)} & \code{x} is truthy / falsy \\
+\code{assertIn(a, seq)} & \code{a in seq} \\
+\code{assertIsNone(x)} & \code{x is None} \\
+\code{assertAlmostEqual(a, b)} & floats equal to 7 decimal places \\
+\code{assertRaises(Err)} & the block raises \code{Err} (use \code{with}) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Run all tests in a folder with \code{python -m unittest} (it finds files named \code{test*.py}); add \code{-v} for one line per test.
+
+\begin{center}
+%%MD-BEGIN
+% ```text
+% test_a:  setUp -> test_a -> tearDown
+% test_b:  setUp -> test_b -> tearDown      (fresh start for every test)
+% ```
+%%MD-END
+\begin{tikzpicture}[node distance=3mm]
+  \tikzset{st/.style={pbox,font=\ttfamily\footnotesize,inner sep=3pt}}
+  \node[st,draw=cblue,fill=cblue!10] (s1) {setUp};
+  \node[st,right=of s1,draw=cgold,fill=cgold!10] (t1) {test\_a};
+  \node[st,right=of t1,draw=cblue,fill=cblue!10] (d1) {tearDown};
+  \node[st,right=8mm of d1,draw=cblue,fill=cblue!10] (s2) {setUp};
+  \node[st,right=of s2,draw=cgold,fill=cgold!10] (t2) {test\_b};
+  \node[st,right=of t2,draw=cblue,fill=cblue!10] (d2) {tearDown};
+  \foreach \x/\y in {s1/t1,t1/d1,s2/t2,t2/d2} \draw[parr] (\x)--(\y);
+\end{tikzpicture}
+\end{center}
+
+% ------------------------------------------------------------
+\section{Doctest}
+
+\code{doctest} runs the examples you put \emph{inside a docstring}. They look like a session at the
+\code{>{}>{}>} prompt. The test is also documentation that cannot go out of date.
+
+\begin{pycode}
+# names2.py
+def normalize_model_name(name):
+    """Make a model name safe for file names.
+
+    >>> normalize_model_name("Haiku")
+    'haiku'
+    >>> normalize_model_name("  Claude   Haiku ")
+    'claude-haiku'
+    >>> normalize_model_name("")
+    ''
+    """
+    return "-".join(name.lower().split())
+
+
+if __name__ == "__main__":
+    import doctest
+    doctest.testmod()
+\end{pycode}
+
+Run it. No output means every example passed. Add \code{-v} to see them all:
+
+\begin{rawcode}
+> python names2.py
+> python names2.py -v
+Trying:
+    normalize_model_name("Haiku")
+Expecting:
+    'haiku'
+ok
+...
+3 tests in 2 items.
+3 passed and 0 failed.
+Test passed.
+\end{rawcode}
+
+(Middle lines omitted.) You can also run it without the \code{if} block: \code{python -m doctest names2.py}.
+A wrong expectation shows what Python really returned:
+
+\begin{rawcode}
+Failed example:
+    twice(2)
+Expected:
+    5
+Got:
+    4
+***Test Failed*** 1 failures.
+\end{rawcode}
+
+\begin{trap}
+Doctest compares the \emph{printed text} exactly. The result \code{'haiku'} must be written with the quotes, and a float
+such as \code{0.30000000000000004} must match digit for digit. Use doctest for short examples; use pytest for real test suites.
+\end{trap}
+
+% ------------------------------------------------------------
+\section{Pytest}
+
+\textbf{pytest} is the most popular test tool. Install it with \code{python -m pip install pytest}. Tests are plain
+functions with plain \code{assert}; there is no class and no \code{self.assertEqual}.
+
+\begin{rawcode}
+> python -m pytest -q
+\end{rawcode}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+\textbf{Feature} & \textbf{What you get} \\
+\midrule
+Discovery & finds \code{test\_*.py} files and \code{test\_*} functions below the current folder \\
+Rich failures & a failing \code{assert} shows both sides and a diff, no special method needed \\
+Fixtures & functions that prepare test data or resources, injected by name \\
+Parametrization & run one test over a table of inputs \\
+Built-ins & \code{tmp\_path}, \code{monkeypatch}, \code{capsys}, \code{pytest.raises}, \code{pytest.approx} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{A first test file}
+
+\begin{pycode}
+# costs.py
+RATES = {"small": (0.10, 0.50), "large": (4.0, 20.0)}   # USD per 1M tokens
+
+def token_cost(model, tokens_in, tokens_out=0):
+    if tokens_in < 0 or tokens_out < 0:
+        raise ValueError("token counts must be >= 0")
+    rate_in, rate_out = RATES[model]
+    return (tokens_in * rate_in + tokens_out * rate_out) / 1e6
+\end{pycode}
+
+\begin{pycode}
+# test_costs_pytest.py   (needs: pytest)
+import pytest
+
+from costs import token_cost
+
+
+def test_zero_tokens_cost_nothing():
+    assert token_cost("small", 0, 0) == 0
+
+
+def test_known_value():
+    assert token_cost("small", 1_000_000, 0) == pytest.approx(0.10)
+
+
+def test_negative_tokens_rejected():
+    with pytest.raises(ValueError, match="must be >= 0"):
+        token_cost("small", -1)
+
+
+def test_unknown_model():
+    with pytest.raises(KeyError):
+        token_cost("huge", 1)
+\end{pycode}
+
+Typical pytest report for a passing run (\emph{pytest is not installed in this environment, so this is the usual
+format, not a captured run}; the file itself was syntax-checked and its logic verified by calling the functions):
+
+\begin{rawcode}
+============================= test session starts =============================
+collected 4 items
+
+test_costs_pytest.py ....                                               [100%]
+
+============================== 4 passed in 0.03s ==============================
+\end{rawcode}
+
+On a failure, pytest prints the test source, a \code{>} on the failing line, and \code{E} lines with the values.
+
+\begin{trap}
+\textbf{Never compare floats with \code{==}.} Binary floats are approximate. Compare with \code{pytest.approx(x)}
+(or \code{math.isclose} in plain code).
+\begin{pycode}
+import math
+print(0.1 + 0.2 == 0.3, math.isclose(0.1 + 0.2, 0.3))
+\end{pycode}
+\begin{rawcode}
+False True
+\end{rawcode}
+\end{trap}
+
+\subsection{Parametrization: one test, many cases}
+
+\code{parametrize} takes a string of argument names and a list of tuples; pytest runs the test once per tuple and reports
+each separately.
+
+\begin{pycode}
+import pytest
+from costs import token_cost
+
+@pytest.mark.parametrize(
+    "model, tin, tout, expected",
+    [
+        ("small", 1_000_000, 0, 0.10),
+        ("small", 0, 1_000_000, 0.50),
+        ("large", 1_000, 500, 0.014),
+    ],
+)
+def test_token_cost_table(model, tin, tout, expected):
+    assert token_cost(model, tin, tout) == pytest.approx(expected)
+\end{pycode}
+
+\subsection{Fixtures}
+
+A \textbf{fixture} is a function marked \code{@pytest.fixture}. A test that lists its name as a parameter receives
+its return value. Fixtures replace \code{setUp} and \code{tearDown}.
+
+\begin{pycode}
+# test_fixtures.py   (needs: pytest)
+import sqlite3
+
+import pytest
+
+
+@pytest.fixture                      # scope="function" is the default
+def history():
+    return [{"role": "user", "content": "hi"}]
+
+
+@pytest.fixture(scope="module")      # created once for this file
+def calls_db():
+    conn = sqlite3.connect(":memory:")
+    conn.execute("create table calls (model text, cost real)")
+    yield conn                       # the test runs here
+    conn.close()                     # teardown, after the last test
+\end{pycode}
+The tests then list the fixtures they need by name:
+\begin{pycode}
+def test_insert(calls_db, history):
+    calls_db.execute("insert into calls values ('small', 0.0001)")
+    assert calls_db.execute("select count(*) from calls").fetchone()[0] == 1
+
+
+def test_same_connection_reused(calls_db):
+    assert calls_db.execute("select count(*) from calls").fetchone()[0] == 1
+
+
+def test_save_reply(tmp_path):
+    out = tmp_path / "reply.txt"     # tmp_path: a fresh temp folder
+    out.write_text("hello")
+    assert out.read_text() == "hello"
+\end{pycode}
+
+\begin{center}
+%%MD-BEGIN
+% ```text
+% scope="function" (default):   test_a [fixture A1]   test_b [fixture A2]   test_c [fixture A3]
+% scope="module":               test_a [---------- one fixture, shared ----------] test_c
+% ```
+%%MD-END
+\begin{tikzpicture}[node distance=0mm]
+  \tikzset{tt/.style={pbox,font=\ttfamily\footnotesize,minimum width=18mm,inner sep=3pt}}
+  \node[font=\sffamily\footnotesize,anchor=east] at (-1.1,0.9) {\texttt{function}};
+  \foreach \i/\nm in {0/test\_a,1/test\_b,2/test\_c}{
+    \node[tt] (f\i) at (\i*4.6,0.9) {\nm};
+    \node[pbox,draw=cgold,fill=cgold!10,font=\sffamily\scriptsize,minimum width=18mm] at (\i*4.6+2.2,0.9) {new fixture};}
+  \node[font=\sffamily\footnotesize,anchor=east] at (-1.1,-0.3) {\texttt{module}};
+  \node[pbox,draw=cgreen,fill=cgreen!10,font=\sffamily\scriptsize,minimum width=11cm,anchor=west] (big) at (-0.9,-0.3) {one fixture, created once, shared by all three tests};
+  \foreach \i/\nm in {0/test\_a,1/test\_b,2/test\_c}{
+    \node[tt] at (\i*4.6,-1.2) {\nm};
+    \draw[parr,cgreen] (\i*4.6,-0.95)--(\i*4.6,-0.55);}
+\end{tikzpicture}
+\end{center}
+
+\begin{gamerule}
+Keep the default \code{function} scope so each test starts clean. Raise the scope (\code{module}, \code{session}) only for something
+slow to build, like a database connection, and only if tests do not change it in ways that leak between them.
+\end{gamerule}
+
+\subsection{Handy flags}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+\textbf{Command} & \textbf{Effect} \\
+\midrule
+\code{python -m pytest -q} & quiet: one dot per test \\
+\code{python -m pytest -v} & one line per test, with names \\
+\code{python -m pytest -x} & stop at the first failure \\
+\code{python -m pytest -k normalize} & run only tests whose name contains \emph{normalize} \\
+\code{pytest test\_costs\_pytest.py::test\_unknown\_model} & run one test (start with \code{python -m}) \\
+\code{python -m pytest -s} & show \code{print} output (otherwise captured) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Testing code that calls the API}
+
+A test must be fast, free and repeatable. A real API call is slow, costs money and gives a different answer
+each time. So \textbf{pass the client in} as a parameter and give the test a fake one.
+
+\begin{center}
+%%MD-BEGIN
+% ```mermaid
+% flowchart LR
+%     subgraph production
+%       P1["summarize(client, text)"] --> P2["real Anthropic client"] --> P3["API (slow, costs money)"]
+%     end
+%     subgraph test
+%       T1["summarize(client, text)"] --> T2["fake client (Mock)"] --> T3["canned reply"]
+%     end
+% ```
+%%MD-END
+\begin{tikzpicture}[node distance=6mm]
+  \node[pbox,draw=cblue,fill=cblue!10,text width=2.8cm] (p1) {\ttfamily\footnotesize summarize(client, text)};
+  \node[pbox,right=of p1,draw=cred,fill=cred!10] (p2) {real client};
+  \node[pbox,right=of p2,draw=cred,fill=cred!10] (p3) {API\\{\footnotesize slow, costs money}};
+  \node[pbox,draw=cblue,fill=cblue!10,text width=2.8cm,below=10mm of p1] (t1) {\ttfamily\footnotesize summarize(client, text)};
+  \node[pbox,right=of t1,draw=cgreen,fill=cgreen!10] (t2) {fake client};
+  \node[pbox,right=of t2,draw=cgreen,fill=cgreen!10] (t3) {canned reply\\{\footnotesize instant, free}};
+  \draw[parr] (p1)--(p2); \draw[parr] (p2)--(p3); \draw[parr] (t1)--(t2); \draw[parr] (t2)--(t3);
+  \node[font=\sffamily\scriptsize,text=cgray,anchor=south west] at (p1.north west) {in production};
+  \node[font=\sffamily\scriptsize,text=cgray,anchor=south west] at (t1.north west) {in a test};
+\end{tikzpicture}
+\end{center}
+
+\begin{pycode}
+# summarize.py
+def summarize(client, text):
+    """Ask the model for a one-line summary. Returns '' if no text block."""
+    response = client.messages.create(
+        model="small-model",
+        max_tokens=200,
+        messages=[{"role": "user", "content": f"Summarize in one line: {text}"}],
+    )
+    for block in response.content:
+        if block.type == "text":
+            return block.text.strip()
+    return ""
+\end{pycode}
+
+\code{unittest.mock.Mock} (standard library) creates an object that accepts any attribute or call. We set what
+\code{create} returns and later check how it was called.
+
+\begin{pycode}
+# test_summarize.py
+import unittest
+from types import SimpleNamespace
+from unittest.mock import Mock
+
+from summarize import summarize
+
+
+def fake_client(*blocks):
+    client = Mock()
+    client.messages.create.return_value = SimpleNamespace(content=list(blocks))
+    return client
+\end{pycode}
+Each test builds a fake client with the blocks the ``model'' should return:
+\begin{pycode}
+class TestSummarize(unittest.TestCase):
+    def test_returns_text(self):
+        client = fake_client(SimpleNamespace(type="text", text=" Short. "))
+        self.assertEqual(summarize(client, "long text"), "Short.")
+
+    def test_skips_thinking_block(self):
+        client = fake_client(SimpleNamespace(type="thinking", thinking="..."),
+                             SimpleNamespace(type="text", text="Answer"))
+        self.assertEqual(summarize(client, "x"), "Answer")
+
+    def test_no_text_block(self):
+        client = fake_client(SimpleNamespace(type="thinking", thinking="..."))
+        self.assertEqual(summarize(client, "x"), "")
+
+    def test_sends_one_request(self):
+        client = fake_client(SimpleNamespace(type="text", text="ok"))
+        summarize(client, "hello")
+        client.messages.create.assert_called_once()
+        kwargs = client.messages.create.call_args.kwargs
+        self.assertEqual(kwargs["max_tokens"], 200)
+        self.assertIn("hello", kwargs["messages"][0]["content"])
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
+\end{pycode}
+\begin{rawcode}
+test_no_text_block (__main__.TestSummarize.test_no_text_block) ... ok
+test_returns_text (__main__.TestSummarize.test_returns_text) ... ok
+test_sends_one_request (__main__.TestSummarize.test_sends_one_request) ... ok
+test_skips_thinking_block (__main__.TestSummarize.test_skips_thinking_block) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.001s
+
+OK
+\end{rawcode}
+
+Note that the same fake lets us test the ``thinking block first'' case without paying for a real model.
+In pytest, the \code{monkeypatch} fixture does a similar job for environment variables, for example
+\code{monkeypatch.setenv(...)} with a dummy value for \code{ANTHROPIC\_API\_KEY}.
+
+\begin{trap}
+A test that passes only when the network is up, or when today's date is right, or when the model answers a
+certain way, is a \emph{flaky} test. Fake the clock, the network and the model. Never put a real API key in a test or commit it.
+\end{trap}
+
+% ------------------------------------------------------------
+\section{Hypothesis: property-based tests}
+
+Instead of listing inputs, describe the \emph{kind} of input and a rule that must always hold; \textbf{Hypothesis} generates many
+cases (100 by default), including odd ones you would not write, and shrinks a failure to a minimal example.
+
+\begin{pycode}
+# test_props.py   (needs: hypothesis)
+from hypothesis import given
+from hypothesis import strategies as st
+
+from costs import token_cost
+
+counts = st.integers(min_value=0, max_value=10**7)
+
+
+@given(counts, counts, counts)
+def test_more_output_never_cheaper(tokens_in, tokens_out, extra):
+    cheaper = token_cost("small", tokens_in, tokens_out)
+    dearer = token_cost("small", tokens_in, tokens_out + extra)
+    assert dearer >= cheaper
+\end{pycode}
+
+(Install with \code{python -m pip install hypothesis}; not installed here. I checked the rule itself against
+100\,000 random inputs with plain \code{random}: it held.) If you let \code{counts} include negative numbers,
+Hypothesis would report a counterexample at once, since \code{token\_cost} raises \code{ValueError} for them.
+That is the point: it finds the cases you forgot.
+
+% ------------------------------------------------------------
+\section{Nox}
+
+\textbf{Nox} runs your checks in fresh environments, for several Python versions or tool combinations. You describe the
+sessions in a Python file named \code{noxfile.py} and run \code{nox}.
+
+\begin{pycode}
+# noxfile.py   (needs: nox)
+import nox
+
+
+@nox.session(python=["3.11", "3.12"])
+def tests(session):
+    session.install("-r", "requirements.txt", "pytest")
+    session.run("pytest", "-q")
+
+
+@nox.session
+def lint(session):
+    session.install("ruff")
+    session.run("ruff", "check", ".")
+\end{pycode}
+
+Nox is the successor of \code{tox}. Use it when your package must work on more than one Python version; for a personal
+project, a plain \code{pytest} is enough.
+
+% ------------------------------------------------------------
+\section{Continuous integration}
+
+\textbf{CI} runs your checks automatically on a server each time code is pushed, so a break is caught
+before it is merged.
+
+\begin{center}
+%%MD-BEGIN
+% ```mermaid
+% flowchart LR
+%     A["git push"] --> B["CI server<br/>fresh machine"]
+%     B --> C["install dependencies"] --> D["ruff + pytest"]
+%     D --> E{"pass?"}
+%     E -- yes --> F["green check<br/>safe to merge"]
+%     E -- no --> G["red cross<br/>fix first"]
+% ```
+%%MD-END
+\begin{tikzpicture}[node distance=6mm]
+  \node[pbox,draw=cblue,fill=cblue!10] (a) {\ttfamily git push};
+  \node[pbox,right=of a] (b) {CI server\\{\footnotesize fresh machine}};
+  \node[pbox,right=of b] (c) {install\\dependencies};
+  \node[pbox,right=of c] (d) {\ttfamily ruff, pytest};
+  \node[pbox,right=of d,draw=cgreen,fill=cgreen!10,yshift=6mm] (e) {green check\\{\footnotesize safe to merge}};
+  \node[pbox,right=of d,draw=cred,fill=cred!10,yshift=-6mm] (f) {red cross\\{\footnotesize fix first}};
+  \foreach \x/\y in {a/b,b/c,c/d} \draw[parr] (\x)--(\y);
+  \draw[parr] (d)--(e.west); \draw[parr] (d)--(f.west);
+\end{tikzpicture}
+\end{center}
+
+A minimal GitHub Actions workflow (file \code{.github/workflows/tests.yml}), not run here:
+
+\begin{rawcode}
+name: tests
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements.txt pytest ruff
+      - run: ruff check .
+      - run: python -m pytest -q
+\end{rawcode}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+\textbf{System} & \textbf{Note} \\
+\midrule
+GitHub Actions & built into GitHub; free for public repositories; the easy start \\
+Jenkins & self-hosted, written in Java; common in companies \\
+Buildbot & self-hosted, written in Python \\
+Travis CI, CircleCI & hosted services; free tiers for open source \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{gamerule}[: CI and secrets]
+CI machines are not yours. Store an API key, if a job truly needs one, in the host's \emph{secrets} setting, never in the repository.
+Most tests should not need a key: use fakes.
+\end{gamerule}
+
+\begin{boss}[: testing what you do not control]
+The hard part of testing is not \code{assert}; it is \emph{isolation}. Code that reads the clock, the environment, a random
+number or a web API gives a different answer on each run or costs money. The fix is one idea: do not reach out from inside
+the function; \textbf{pass the dependency in} (the client, the current time, a random seed) and give the test a fake or a fixed value.
+Then the test depends only on its inputs, which is what makes it fast, free and repeatable. Practise it on \code{summarize(client, text)}:
+the function never creates its own client.
+\end{boss}
+
+\begin{practice}
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+\item Run \code{ruff check} on a file that uses a variable before defining it. What is the code of the error, and does the linter run your program?
+\item Write three \code{unittest} tests for a function \code{clip(text, n)} that cuts text to at most \code{n} characters. Which edge case would you add first?
+\item What do \code{setUp} and \code{tearDown} do, and which pytest feature replaces them?
+\item Rewrite your three tests as one \code{parametrize} test. What do you gain?
+\item Why is \code{assert cost == 0.014} a bad test, and what do you write instead?
+\item Your function calls \code{client.messages.create}. Describe how you test it without internet or an API key.
+\end{enumerate}
+\end{practice}
+
+\begin{achievement}{Green Build}
+\begin{itemize}[leftmargin=*,itemsep=1pt]
+\item Lint and format code with Ruff, and read an error code and its location.
+\item Write unit tests in \code{unittest} and \code{pytest}, including edge cases and exceptions.
+\item Use fixtures and \code{parametrize} to remove repeated test code.
+\item Test API-calling code with a fake client, with no network and no key.
+\item Describe how CI runs the same checks on every push.
+\end{itemize}
+\end{achievement}
+
+%%MD-BEGIN
+% **Related:** [[10 - Functions]] (what you test), [[11 - Objects]] (`TestCase` is a class), [[13 - Development Environment]] (install pytest, ruff), [[14 - Type Hints and Documentation]] (mypy, docstrings), [[16 - Debugging]] (when a test fails), [[23 - Data in a Box - Persistent Storage]] (sqlite fixture).
+%%MD-END

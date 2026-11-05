@@ -1,0 +1,460 @@
+\chapter{Bytes and Bytearray}
+
+\textbf{What this chapter gives you:} the two types Python uses for raw binary data. \code{bytes} is
+read-only and \code{bytearray} can be edited in place. You will meet them every time you send an image to
+an API, read a streamed response, hash a prompt, or look at what a tokenizer really sees.
+
+%RELATED: 4, 8, 17, 18
+
+% ------------------------------------------------------------
+\section{Bytes}
+
+A \code{bytes} object is a fixed row of small integers, each from 0 to 255. Think of beads on a wire:
+all the same size, no meaning attached. A \code{str} is different: it is a row of characters.
+Python never mixes the two on its own. You convert on purpose.
+
+\begin{keyidea}[: a byte is just a number]
+A byte holds one integer in the range 0--255. Python \emph{prints} some bytes as letters (\code{b"A"})
+because that is easier to read. The data is still the number 65.
+\end{keyidea}
+
+%MD<
+% ```text
+% str    :   c     a     f     é          4 characters
+%            |     |     |     |
+% encode     v     v     v     v  v        .encode("utf-8")
+% bytes  :  63    61    66    c3 a9        5 bytes (shown in hex)
+%            ^                               .decode("utf-8")
+% ```
+%MD>
+\begin{center}
+\begin{tikzpicture}[ch/.style={draw=cgold,fill=cgold!12,minimum width=10mm,minimum height=7mm,font=\ttfamily\small},
+  by/.style={draw=cblue,fill=cblue!8,minimum width=10mm,minimum height=7mm,font=\ttfamily\small},
+  lab/.style={font=\sffamily\scriptsize,text=cgray},>=Stealth]
+  \node[ch] (c1) at (0,1.6) {c};
+  \node[ch] (c2) at (1,1.6) {a};
+  \node[ch] (c3) at (2,1.6) {f};
+  \node[ch,minimum width=20mm] (c4) at (3.5,1.6) {\'e};
+  \node[by] (b1) at (0,0) {63};
+  \node[by] (b2) at (1,0) {61};
+  \node[by] (b3) at (2,0) {66};
+  \node[by] (b4) at (3,0) {c3};
+  \node[by] (b5) at (4,0) {a9};
+  \foreach \i in {1,2,3} \draw[->,cgray] (c\i) -- (b\i);
+  \draw[->,cgray] (c4.south west) -- (b4.north);
+  \draw[->,cgray] (c4.south east) -- (b5.north);
+  \node[lab,anchor=east] at (-0.8,1.6) {\code{str}, 4 chars};
+  \node[lab,anchor=east] at (-0.8,0) {\code{bytes}, 5 bytes};
+  \node[lab,anchor=west] at (5.0,1.6) {text: what people read};
+  \node[lab,anchor=west] at (5.0,0.8) {\code{.encode("utf-8")} down, \code{.decode("utf-8")} up};
+  \node[lab,anchor=west] at (5.0,0) {numbers: what is stored and sent};
+\end{tikzpicture}
+\end{center}
+
+One character can take more than one byte. That is why \code{len(text)} and \code{len(data)} can differ.
+
+\subsection{Create with quotes}
+
+Put a \code{b} in front of the quote. Only plain ASCII characters are allowed inside. For any other
+value, write two hex digits after a backslash-x.
+
+\begin{pycode}
+>>> raw = b"GET\x00\x01\xff"
+>>> raw
+b'GET\x00\x01\xff'
+>>> type(raw)
+<class 'bytes'>
+>>> len(raw)
+6
+>>> b"\x41\x42\x43"
+b'ABC'
+\end{pycode}
+
+\subsection{Create with \texttt{bytes()}}
+
+Give \code{bytes()} an iterable of integers (a list, a tuple, a \code{range}), or a single integer.
+
+\begin{pycode}
+>>> bytes([72, 105, 33])
+b'Hi!'
+>>> bytes(3)
+b'\x00\x00\x00'
+>>> len(bytes(range(256)))
+256
+>>> bytes([256])
+Traceback (most recent call last):
+  ...
+ValueError: bytes must be in range(0, 256)
+\end{pycode}
+
+\begin{trap}[: \texttt{bytes(3)} is not \texttt{b"3"}]
+A single integer means \emph{length}, not value. \code{bytes(3)} gives three zero bytes. To get one byte
+whose value is 3, pass a list: \code{bytes([3])}.
+\end{trap}
+
+\subsection{Create from a hex string}
+
+\code{bytes.fromhex()} reads pairs of hex digits and ignores spaces between the pairs. A lone digit is an
+error. It is a \emph{class method}: you call it on \code{bytes} itself, not on a value (Chapter 11).
+\code{.hex()} goes the other way.
+
+\begin{pycode}
+>>> bytes.fromhex("48 69 21")
+b'Hi!'
+>>> bytes.fromhex("4 8")
+Traceback (most recent call last):
+  ...
+ValueError: non-hexadecimal number found in fromhex() arg at position 1
+>>> b"Hi!".hex()
+'486921'
+\end{pycode}
+
+\subsection{Encode and decode}
+
+Text becomes bytes with \code{.encode()}. Bytes become text with \code{.decode()}. You must name the
+encoding; use \code{"utf-8"} unless you have a reason not to. Chapter 17 covers the details.
+
+\begin{pycode}
+>>> text = "caf\xe9"
+>>> data = text.encode("utf-8")
+>>> data
+b'caf\xc3\xa9'
+>>> len(text), len(data)
+(4, 5)
+>>> data.decode("utf-8") == text
+True
+>>> data.decode("ascii")
+Traceback (most recent call last):
+  ...
+UnicodeDecodeError: 'ascii' codec can't decode byte 0xc3 in position 3: ...
+\end{pycode}
+
+\begin{gamerule}
+Always pass the encoding by name and decode with the same one you encoded with. Text on the wire (JSON,
+HTTP bodies, files) is almost always UTF-8.
+\end{gamerule}
+
+\subsection{Index, slice, combine, repeat}
+
+Bytes are a sequence, so \code{[ ]}, slices, \code{+}, \code{*}, \code{in}, and \code{for} all work.
+The catch is what you get back.
+
+\begin{typecheck}[: indexing vs slicing]
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l l X@{}}
+\toprule
+\textbf{Expression} & \textbf{Result} & \textbf{Type} & \textbf{Note} \\
+\midrule
+\code{b[2]}       & \code{97}      & \code{int}   & one position gives a \emph{number} \\
+\code{b[2:3]}     & \code{b"a"}    & \code{bytes} & a slice always gives \code{bytes} \\
+\code{b + b}      & joined         & \code{bytes} & new object, both sides must be \code{bytes} \\
+\code{b * 2}      & repeated       & \code{bytes} & new object \\
+\code{for x in b} & \code{x}       & \code{int}   & the loop walks numbers \\
+\code{97 in b}    & \code{True}    & \code{bool}  & an int tests for one byte \\
+\code{b"a" in b}  & \code{True}    & \code{bool}  & bytes test for a run of bytes \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{typecheck}
+
+\begin{pycode}
+>>> b = b"\xff\x01abcdef"
+>>> b[2]
+97
+>>> chr(b[2])
+'a'
+>>> b[2:3]
+b'a'
+>>> b[-3:]
+b'def'
+>>> b[0:2] + b"!!"
+b'\xff\x01!!'
+>>> b"ab" * 2
+b'abab'
+>>> list(b"Hi")
+[72, 105]
+>>> b"abc" == "abc"
+False
+>>> b"abc" + "def"
+Traceback (most recent call last):
+  ...
+TypeError: can't concat str to bytes
+\end{pycode}
+
+A useful real-world check is the first few bytes of a file, its ``magic number'':
+
+\begin{pycode}
+>>> data = b"%PDF-1.7 ...rest of file..."
+>>> data[:4] == b"%PDF"
+True
+>>> data.startswith(b"%PDF")
+True
+\end{pycode}
+
+\subsection{Bytes are immutable}
+
+You cannot assign to a position. \code{b1 += b2} looks like an edit, but Python builds a \emph{new} bytes
+object and moves the name \code{b1} onto it. The old one is dropped.
+
+\begin{pycode}
+>>> data = bytes([1, 2, 3])
+>>> data[0] = 9
+Traceback (most recent call last):
+  ...
+TypeError: 'bytes' object does not support item assignment
+>>> before = data
+>>> data += bytes([4])
+>>> data
+b'\x01\x02\x03\x04'
+>>> before
+b'\x01\x02\x03'
+>>> data is before
+False
+\end{pycode}
+
+% ------------------------------------------------------------
+\section{Bytearray}
+
+\code{bytearray} is the editable twin of \code{bytes}. Every read operation works the same. On top of
+that you can change values, change the length, insert, and delete. Use it when you build binary data
+piece by piece.
+
+%MD<
+% ```text
+% bytes      x = b"ab"          x += b"!"
+%   before:  x --> [61 62]      x --> [61 62 21]   (a NEW object)
+%                  [61 62] is dropped
+%
+% bytearray  x = bytearray(b"ab")     x.extend(b"!")
+%   before:  x --> [61 62]            x --> [61 62 21]   (the SAME object grew)
+% ```
+%MD>
+\begin{center}
+\begin{tikzpicture}[box/.style={draw=cblue,fill=cblue!8,minimum height=7mm,font=\ttfamily\small,inner sep=3pt},
+  old/.style={draw=cgray,dashed,minimum height=7mm,font=\ttfamily\small,inner sep=3pt,text=cgray},
+  nm/.style={draw=cgold,fill=cgold!15,rounded corners=2pt,font=\ttfamily\small,inner sep=3pt},
+  lab/.style={font=\sffamily\scriptsize,text=cgray},>=Stealth]
+  % bytes panel
+  \node[lab,anchor=west] at (-0.4,2.5) {\textbf{bytes}: \code{x += b"!"}};
+  \node[nm] (x1) at (0,1.2) {x};
+  \node[old] (o1) at (2.2,1.9) {61 62};
+  \node[box] (n1) at (2.6,0.5) {61 62 21};
+  \draw[->,cgray,dashed] (x1) -- node[lab,above,sloped]{before} (o1);
+  \draw[->,thick,cblue] (x1) -- node[lab,below,sloped]{after} (n1);
+  \node[lab,anchor=west] at (3.4,1.9) {dropped};
+  \node[lab,anchor=west] at (4.1,0.5) {new object};
+  % bytearray panel
+  \node[lab,anchor=west] at (7.6,2.5) {\textbf{bytearray}: \code{x.extend(b"!")}};
+  \node[nm] (x2) at (7.8,1.2) {x};
+  \node[box] (n2) at (10.4,1.2) {61 62 21};
+  \draw[->,thick,cblue] (x2) -- (n2);
+  \node[lab,anchor=west] at (9.2,0.5) {same object, grown in place};
+\end{tikzpicture}
+\end{center}
+
+\subsection{Create with \texttt{bytearray()}}
+
+\begin{pycode}
+>>> bytearray()
+bytearray(b'')
+>>> bytearray([1, 2, 3, 255])
+bytearray(b'\x01\x02\x03\xff')
+>>> bytearray(4)
+bytearray(b'\x00\x00\x00\x00')
+>>> bytearray("abc", "ascii")
+bytearray(b'abc')
+>>> bytearray(b"from bytes")
+bytearray(b'from bytes')
+\end{pycode}
+
+With a string you must give the encoding as the second argument. \code{bytearray("abc")} alone is a
+\code{TypeError}.
+
+\subsection{Read: index and slice}
+
+Same rules as \code{bytes}, with one difference. A slice of a \code{bytearray} is a \code{bytearray}.
+
+\begin{pycode}
+>>> ba = bytearray(b"\xff\x01abcdef")
+>>> ba[2]
+97
+>>> ba[4:6]
+bytearray(b'cd')
+\end{pycode}
+
+\subsection{Change one byte or many}
+
+\begin{pycode}
+>>> ba = bytearray([1, 2, 3, 255])
+>>> ba[1] = 127
+>>> ba
+bytearray(b'\x01\x7f\x03\xff')
+>>> ba = bytearray(b"\xff\x01abcdef")
+>>> ba[2:5] = b"oops"
+>>> ba
+bytearray(b'\xff\x01oopsdef')
+>>> ba[1] = 300
+Traceback (most recent call last):
+  ...
+ValueError: byte must be in range(0, 256)
+\end{pycode}
+
+The slice assignment above replaced three bytes with four, so the array grew. Strings cannot do this.
+
+\subsection{\texttt{insert()}, \texttt{append()}, \texttt{extend()}}
+
+\begin{pycode}
+>>> ba = bytearray(b"abc")
+>>> ba.insert(0, 2)
+>>> ba.append(4)
+>>> ba.extend(b"!!!")
+>>> ba
+bytearray(b'\x02abc\x04!!!')
+>>> ba.append(b"\x04")
+Traceback (most recent call last):
+  ...
+TypeError: 'bytes' object cannot be interpreted as an integer
+\end{pycode}
+
+\begin{typecheck}[: what each method wants]
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l l X@{}}
+\toprule
+\textbf{Method} & \textbf{Argument} & \textbf{Returns} & \textbf{Effect} \\
+\midrule
+\code{ba.append(n)}      & one \code{int} 0--255  & \code{None} & adds one byte at the end \\
+\code{ba.extend(bs)}     & bytes-like or ints     & \code{None} & adds many bytes at the end \\
+\code{ba.insert(i, n)}   & index, \code{int}      & \code{None} & adds one byte before position \code{i} \\
+\code{ba.pop()}          & optional index         & \code{int}  & removes and returns one byte \\
+\code{ba.replace(a, b)}  & two bytes-like         & \code{bytearray} & a \emph{new} array; \code{ba} is unchanged \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{typecheck}
+
+\begin{trap}[: \texttt{replace()} does not edit in place]
+On a \code{bytearray}, \code{.replace()} returns a changed \emph{copy}, like \code{str.replace()}.
+If you ignore the return value, nothing happens.
+\end{trap}
+
+\begin{pycode}
+>>> ba = bytearray(b"\xff\x01abcdef")
+>>> new = ba.replace(b"\x01ab", b"XYZ")
+>>> new
+bytearray(b'\xffXYZcdef')
+>>> ba
+bytearray(b'\xff\x01abcdef')
+\end{pycode}
+
+\subsection{Combine, repeat, freeze}
+
+\begin{pycode}
+>>> bytearray(b"\x01\x02") + bytearray(b"\x03\x04")
+bytearray(b'\x01\x02\x03\x04')
+>>> bytearray(b"\x01\x02") * 2
+bytearray(b'\x01\x02\x01\x02')
+>>> frozen = bytes(bytearray(b"hi"))
+>>> type(frozen)
+<class 'bytes'>
+>>> hash(bytearray(b"hi"))
+Traceback (most recent call last):
+  ...
+TypeError: unhashable type: 'bytearray'
+\end{pycode}
+
+\code{bytes(some\_bytearray)} makes an immutable copy. Because a \code{bytearray} can change, it is
+unhashable, so it cannot be a dictionary key or a set member (Chapter 9). A \code{bytes} can.
+
+\begin{typecheck}[: bytes vs bytearray vs str]
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l c c c X@{}}
+\toprule
+ & \textbf{mutable} & \textbf{hashable} & \textbf{\code{x[0]} gives} & \textbf{slice gives} \\
+\midrule
+\code{bytes}     & \xmark & \cmark & \code{int}  & \code{bytes} \\
+\code{bytearray} & \cmark & \xmark & \code{int}  & \code{bytearray} \\
+\code{str}       & \xmark & \cmark & \code{str}  & \code{str} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{typecheck}
+
+% ------------------------------------------------------------
+\section{Where bytes show up in AI work}
+
+You will not write much byte-level code, but the types appear at every boundary where data leaves
+your program.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+\textbf{Situation} & \textbf{What you hold} \\
+\midrule
+Reading an image or PDF to send to a vision model & \code{bytes} from \code{open(path, "rb")} \\
+Streaming reply arrives in pieces                  & \code{bytes} chunks, collected in a \code{bytearray} \\
+Sending an image as JSON                           & \code{base64} turns \code{bytes} into \code{bytes} of ASCII, then \code{.decode()} to \code{str} \\
+Cache key for a prompt                             & \code{hashlib} takes \code{bytes}, so \code{.encode()} first \\
+Byte-level tokenizers                              & the model sees UTF-8 bytes, so one emoji can be several tokens \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Two short examples, both from the standard library:
+
+\begin{pycode}
+>>> import base64, hashlib
+>>> base64.b64encode(b"Hi!")
+b'SGkh'
+>>> base64.b64encode(b"Hi!").decode("ascii")
+'SGkh'
+>>> hashlib.sha256(b"prompt").hexdigest()[:8]
+'cf07194e'
+\end{pycode}
+
+Streamed replies can split a multi-byte character across two chunks. Collect the raw bytes first and
+decode once at the end:
+
+\begin{pycode}
+chunks = [b'{"name": "caf\xc3', b'\xa9", "tokens": 4}']
+buf = bytearray()
+for chunk in chunks:
+    buf.extend(chunk)
+print(len(buf), "bytes")
+print(buf.decode("utf-8") == '{"name": "caf\xe9", "tokens": 4}')
+\end{pycode}
+\begin{rawcode}
+30 bytes
+True
+\end{rawcode}
+
+Decoding each chunk alone would fail, because the two halves of \code{c3 a9} are in different chunks.
+
+\begin{boss}[: bytes and str look alike but are not]
+The same-looking value behaves differently. \code{b"abc"[0]} is the number 97. \code{"abc"[0]} is the
+string \code{"a"}. \code{b"abc" == "abc"} is \code{False}, and \code{+} between them is a
+\code{TypeError}.\\[2pt]
+\textbf{Strategy:} ask ``is this data text or raw bytes?'' at every boundary. Decode as soon as bytes
+come in and encode as late as possible before they leave. Inside your program, work with \code{str}.
+\end{boss}
+
+\begin{practice}
+\begin{enumerate}
+\item Build a \code{bytes} value holding the numbers 1 to 5. What does \code{len()} return?
+\item What is the difference between \code{bytes(5)} and \code{bytes([5])}?
+\item Given \code{b = b"hey"}, what are the type and value of \code{b[0]} and of \code{b[0:1]}?
+\item Make a \code{bytearray} from the numbers 1 to 5, then append 6 and set the first byte to 0.
+\item Why does \code{ba.replace(b"a", b"b")} seem to do nothing when you ignore its result?
+\item A friend encodes a string as UTF-8 and decodes it as ASCII and gets an error. Why?
+\end{enumerate}
+\end{practice}
+
+\begin{achievement}{Byte Wrangler}
+You can now:
+\begin{itemize}
+\item create \code{bytes} and \code{bytearray} from literals, lists, hex strings, and text;
+\item predict whether an index or slice returns an \code{int} or a sequence;
+\item convert between \code{str} and \code{bytes} with \code{.encode()} and \code{.decode()};
+\item pick \code{bytearray} when data must grow or change, and freeze it with \code{bytes()};
+\item recognise where bytes appear in API, file, and tokenizer work.
+\end{itemize}
+\end{achievement}

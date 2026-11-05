@@ -1,0 +1,1050 @@
+% ============================================================
+%  Introducing Python, chapter 24: The Web
+% ============================================================
+\chapter{The Web}
+
+\tikzset{
+  w24n/.style={draw=#1,fill=#1!10,rounded corners=2pt,inner sep=4pt,
+    minimum height=7mm,font=\sffamily\small,align=center},
+  w24n/.default=cblue
+}
+
+\textbf{What this chapter gives you.} Almost every AI product you will build talks over HTTP:
+your code calls a model API, and other code calls your service. This chapter shows how HTTP
+works, how to write clients and small servers in Python, and how to pull data out of web pages.
+
+% ------------------------------------------------------------
+\section{Web Basics}
+
+The web is a \textbf{client--server} system. A client opens a TCP connection, sends a request in
+text form (HTTP), and the server sends back a response. TCP/IP only moves bytes; HTTP gives those
+bytes meaning. The three original ideas were HTTP (the protocol), HTML (a page format) and the URL
+(an address for a resource).
+
+%MD
+%```mermaid
+%sequenceDiagram
+%    participant C as Client
+%    participant S as Server
+%    C->>S: GET /health HTTP/1.1 (+ headers: Host, Accept, ...)
+%    S-->>C: 200 OK + headers + body (status code, Content-Type, bytes)
+%    Note over C,S: Connection ends. The server keeps no memory of you.
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\sffamily\small,>=Stealth]
+  \node[w24n=cblue,minimum width=2.4cm]  (c) at (0,0) {Client};
+  \node[w24n=cgreen,minimum width=2.4cm] (s) at (9,0) {Server};
+  \draw[dashed,cgray] (c.south) -- (0,-3.5);
+  \draw[dashed,cgray] (s.south) -- (9,-3.5);
+  \draw[->,thick,cblue] (0,-1.0) -- node[above,font=\ttfamily\footnotesize]{GET /health HTTP/1.1} (9,-1.0);
+  \node[font=\scriptsize,text=cgray,anchor=west] at (0.1,-1.35) {+ headers (Host, Accept, ...)};
+  \draw[<-,thick,cgreen] (0,-2.3) -- node[above,font=\ttfamily\footnotesize]{200 OK + headers + body} (9,-2.3);
+  \node[font=\scriptsize,text=cgray,anchor=east] at (8.9,-2.65) {status code, Content-Type, bytes};
+  \node[font=\scriptsize\itshape,text=cred] at (4.5,-3.2) {connection ends: the server keeps no memory of you};
+\end{tikzpicture}
+\end{center}
+
+\begin{keyidea}[: HTTP is stateless]
+Every request stands alone. The server does not remember the last one. Caching, shopping carts and
+logins all need extra tricks, such as \textbf{cookies}: a small value the server sends once and
+the client sends back with each later request.
+\end{keyidea}
+
+\subsection{URL anatomy}
+
+%MD
+%```text
+%https://   api.example.com   :8443   /v1/answer   ?q=hi&n=2
+%scheme     host              port    path         query
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\ttfamily\small,every node/.style={inner sep=0pt,outer sep=0pt}]
+  \node[anchor=west,text=cblue]   (a) at (0,0) {https://};
+  \node[anchor=west,text=cgreen]  (b) at (a.east) {api.example.com};
+  \node[anchor=west,text=cgold]   (c) at (b.east) {:8443};
+  \node[anchor=west,text=cpurple] (d) at (c.east) {/v1/answer};
+  \node[anchor=west,text=cred]    (e) at (d.east) {?q=hi\&n=2};
+  \foreach \n/\l/\col in {a/scheme/cblue,b/host/cgreen,c/port/cgold,d/path/cpurple,e/query/cred}
+    \draw[decorate,decoration={brace,mirror,amplitude=3pt},\col] ([yshift=-1.5mm]\n.south west) -- node[below=3pt,font=\sffamily\scriptsize,text=\col]{\l} ([yshift=-1.5mm]\n.south east);
+\end{tikzpicture}
+\end{center}
+
+\begin{pycode}
+from urllib.parse import urlparse, parse_qs
+
+u = urlparse("https://api.example.com:8443/v1/answer?q=hi&n=2#top")
+print(u.scheme, u.hostname, u.port, u.path)
+print(u.query, parse_qs(u.query))
+\end{pycode}
+\begin{rawcode}
+https api.example.com 8443 /v1/answer
+q=hi&n=2 {'q': ['hi'], 'n': ['2']}
+\end{rawcode}
+
+Note that \code{parse\_qs} gives \emph{lists} of strings, because a key may repeat.
+
+\subsection{Status codes}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+\textbf{Range} & \textbf{Meaning} & \textbf{Examples you will meet} \\
+\midrule
+1xx & information & rarely seen by your code \\
+2xx & success & 200 OK, 201 Created \\
+3xx & redirect & 301/302: the resource lives at another URL \\
+4xx & \textbf{your} mistake & 400 bad input, 401/403 auth, 404 not found, 429 too many requests \\
+5xx & \textbf{their} mistake & 500 crash, 502/503 upstream down or overloaded \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{gamerule}
+Treat 429 and 5xx as ``try again later'' (with a delay) and 4xx as ``fix the request''. Retrying a
+400 forever never helps. Model APIs behave this way too.
+\end{gamerule}
+
+\subsection{Cookies in one example}
+
+\begin{pycode}
+from http.cookies import SimpleCookie
+
+jar = SimpleCookie()
+jar["session"] = "abc123"
+jar["session"]["path"] = "/"
+print(jar.output())
+parsed = SimpleCookie("session=abc123; theme=dark")
+print({k: m.value for k, m in parsed.items()})
+\end{pycode}
+\begin{rawcode}
+Set-Cookie: session=abc123; Path=/
+{'session': 'abc123', 'theme': 'dark'}
+\end{rawcode}
+
+% ------------------------------------------------------------
+\section{HTTP Testing}
+
+HTTP is plain text, so you can poke a server by hand before writing any Python.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X X@{}}
+\toprule
+\textbf{Tool} & \textbf{What it is} & \textbf{Use it for} \\
+\midrule
+Telnet & old raw TCP terminal; you type the HTTP yourself & seeing the protocol; mostly replaced (and not installed by default on Windows) \\
+curl & the standard command-line web client & quick GET/POST, headers, scripts \\
+HTTPie (\code{http}) & friendlier curl with JSON by default; \code{pip install httpie} & readable manual testing \\
+httpbin & a test site that echoes requests back; can run in Docker & safe target for experiments \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Here is what Telnet would show you, done with a plain socket against a tiny local service
+(listed in the next section). The text you send is the whole request:
+
+\begin{pycode}
+import socket
+
+request = (
+    "GET /health HTTP/1.1\r\n"
+    "Host: localhost\r\n"
+    "Connection: close\r\n"
+    "\r\n"                      # blank line = end of headers
+)
+with socket.create_connection(("127.0.0.1", 8765)) as s:
+    s.sendall(request.encode("ascii"))
+    chunks = []
+    while data := s.recv(4096):
+        chunks.append(data)
+print(b"".join(chunks).decode("ascii"))
+\end{pycode}
+\begin{rawcode}
+HTTP/1.0 200 OK
+Server: BaseHTTP/0.6 Python/3.12.10
+Date: Mon, 02 Nov 2026 17:46:15 GMT
+Content-Type: application/json
+Content-Length: 16
+
+{"status": "ok"}
+\end{rawcode}
+
+The first line is the status line. Then come headers, one blank line, then the body. The
+\code{Date} line changes on each run.
+
+%MD
+%```text
+%HTTP/1.0 200 OK                      <- status line
+%Content-Type: application/json       <- headers
+%Content-Length: 16                   <- headers
+%                                     <- blank line (separator)
+%{"status": "ok"}                     <- body (bytes)
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\sffamily\small]
+  \node[draw=cblue,fill=cblue!10,anchor=north west,text width=8.5cm,inner sep=3pt,font=\ttfamily\footnotesize] (a) at (0,0)
+    {HTTP/1.0 200 OK};
+  \node[draw=cgold,fill=cgold!10,anchor=north west,text width=8.5cm,inner sep=3pt,font=\ttfamily\footnotesize] (b) at (a.south west)
+    {Content-Type: application/json\\Content-Length: 16};
+  \node[draw=cgray,fill=cgray!10,anchor=north west,text width=8.5cm,inner sep=3pt,font=\ttfamily\footnotesize] (c) at (b.south west)
+    {\textit{(blank line)}};
+  \node[draw=cgreen,fill=cgreen!10,anchor=north west,text width=8.5cm,inner sep=3pt,font=\ttfamily\footnotesize] (d) at (c.south west)
+    {\{"status": "ok"\}};
+  \node[anchor=west,text=cblue] at ([xshift=3mm]a.east) {status line};
+  \node[anchor=west,text=cgold] at ([xshift=3mm]b.east) {headers};
+  \node[anchor=west,text=cgray] at ([xshift=3mm]c.east) {separator};
+  \node[anchor=west,text=cgreen] at ([xshift=3mm]d.east) {body (bytes)};
+\end{tikzpicture}
+\end{center}
+
+The same thing with curl, run against that local service (real output):
+
+\begin{rawcode}
+$ curl -s -X POST -H "Content-Type: application/json" \
+       -d '{"name":"run-7"}' http://127.0.0.1:8765/runs
+{"stored": "run-7"}
+$ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8765/missing
+404
+\end{rawcode}
+
+\begin{trap}
+JSON needs \textbf{double quotes}. A body like \code{\{'a': 1\}} is a Python dict literal, not JSON,
+and a server will reject it. Also, quoting rules differ in PowerShell and cmd; on Windows the
+simplest fix is to test from Python.
+\end{trap}
+
+HTTPie sends JSON by default (\code{http POST url a=1 b=2}) and form data with \code{-f}. Not run
+here (needs \code{pip install httpie}).
+
+% ------------------------------------------------------------
+\section{Web Clients}
+
+\subsection{The standard library}
+
+The \code{http} package covers protocol details (\code{client}, \code{server}, \code{cookies}).
+\code{urllib} sits on top (\code{request}, \code{response}, \code{parse}, \code{error}). First,
+the stub service the next examples call. It plays the role of a tiny model API: it has a health
+check, an \code{/answer} endpoint, and a POST route.
+
+\begin{pycode}
+# web_server.py - a stub service on localhost (stdlib only)
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse, parse_qs
+
+
+class Handler(BaseHTTPRequestHandler):
+    def _send(self, status, payload):
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        url = urlparse(self.path)
+        if url.path == "/health":
+            self._send(200, {"status": "ok"})
+        elif url.path == "/answer":
+            q = parse_qs(url.query).get("q", [""])[0]
+            self._send(200, {"question": q, "answer": q.upper(),
+                             "tokens": len(q.split())})
+        else:
+            self._send(404, {"error": "no such route"})
+
+    def do_POST(self):
+        size = int(self.headers.get("Content-Length", 0))
+        data = json.loads(self.rfile.read(size))
+        self._send(201, {"stored": data["name"]})
+
+    def log_message(self, *args):    # silence the access log
+        pass
+
+
+server = ThreadingHTTPServer(("127.0.0.1", 8765), Handler)
+threading.Thread(target=server.serve_forever, daemon=True).start()
+BASE = "http://127.0.0.1:8765"
+\end{pycode}
+
+Now a GET, looking at every type along the way:
+
+\begin{pycode}
+import json
+import urllib.request
+from web_server import BASE
+
+with urllib.request.urlopen(f"{BASE}/health") as resp:
+    print(type(resp).__name__, resp.status)
+    print(resp.headers["Content-Type"])
+    raw = resp.read()
+
+print(type(raw), raw)
+text = raw.decode("utf-8")
+print(type(text), text)
+data = json.loads(text)
+print(type(data), data["status"])
+\end{pycode}
+\begin{rawcode}
+HTTPResponse 200
+application/json
+<class 'bytes'> b'{"status": "ok"}'
+<class 'str'> {"status": "ok"}
+<class 'dict'> ok
+\end{rawcode}
+
+\begin{typecheck}
+The body travels as \textbf{bytes}. Turning it into something usable takes three steps, and each
+has its own type:
+
+%MD
+%```mermaid
+%flowchart LR
+%    R["HTTPResponse (connection object)"] -->|".read()"| B["bytes"]
+%    B -->|".decode()"| T["str"]
+%    T -->|"json.loads()"| D["dict / list"]
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\sffamily\small,>=Stealth]
+  \node[w24n=cgray]   (r) at (0,0)   {\code{HTTPResponse}\\[-1pt]{\scriptsize connection object}};
+  \node[w24n=cred]    (b) at (4.1,0) {\code{bytes}\\[-1pt]{\scriptsize \code{.read()}}};
+  \node[w24n=cgold]   (t) at (7.4,0) {\code{str}\\[-1pt]{\scriptsize \code{.decode()}}};
+  \node[w24n=cgreen]  (d) at (10.9,0){\code{dict}/\code{list}\\[-1pt]{\scriptsize \code{json.loads()}}};
+  \draw[->,thick] (r) -- (b); \draw[->,thick] (b) -- (t); \draw[->,thick] (t) -- (d);
+\end{tikzpicture}
+\end{center}
+\code{json.load(resp)} (no \code{s}) reads and parses a file-like object in one go. Calling
+\code{resp.read()} twice returns empty bytes the second time: the stream is used up.
+\end{typecheck}
+
+Query strings, POST bodies, errors and timeouts:
+
+\begin{pycode}
+import json
+import urllib.request
+import urllib.error
+from urllib.parse import urlencode
+from web_server import BASE
+
+query = urlencode({"q": "what is a token?"})
+print(query)
+with urllib.request.urlopen(f"{BASE}/answer?{query}", timeout=5) as resp:
+    reply = json.load(resp)
+print(reply)
+
+body = json.dumps({"name": "run-42"}).encode("utf-8")
+req = urllib.request.Request(
+    f"{BASE}/runs",
+    data=body,
+    headers={"Content-Type": "application/json"},
+    method="POST",
+)
+with urllib.request.urlopen(req, timeout=5) as resp:
+    print(resp.status, json.load(resp))
+
+try:
+    urllib.request.urlopen(f"{BASE}/nope", timeout=5)
+except urllib.error.HTTPError as err:
+    print(err.code, err.reason, json.load(err))
+\end{pycode}
+\begin{rawcode}
+q=what+is+a+token%3F
+{'question': 'what is a token?', 'answer': 'WHAT IS A TOKEN?', 'tokens': 4}
+201 {'stored': 'run-42'}
+404 Not Found {'error': 'no such route'}
+\end{rawcode}
+
+\begin{trap}
+\code{urllib} \emph{raises} \code{HTTPError} on 4xx/5xx, and the error object is itself a readable
+response (you can parse its JSON body). Never build query strings by hand with f-strings: use
+\code{urlencode}, which escapes spaces and \code{?}. And always pass \code{timeout}; without one, a
+stalled server can hang your program forever.
+\end{trap}
+
+\subsection{Requests}
+
+\code{requests} is the popular third-party client. It needs \code{pip install requests}; the
+snippets below were syntax-checked only (not run, since no network calls are allowed here).
+
+\begin{pycode}
+import requests
+
+resp = requests.get(
+    "http://127.0.0.1:8765/answer",
+    params={"q": "what is a token?"},    # encoded for you
+    timeout=5,
+)
+resp.raise_for_status()      # raises on 4xx/5xx; requests does NOT by default
+data = resp.json()           # parsed JSON: a dict here
+\end{pycode}
+
+\begin{typecheck}
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+\textbf{Expression} & \textbf{Type} & \textbf{Note} \\
+\midrule
+\code{resp} & \code{Response} & prints as \code{<Response [200]>}; truthy if status $<$ 400 \\
+\code{resp.status\_code} & \code{int} & 200, 404, \dots \\
+\code{resp.content} & \code{bytes} & raw body \\
+\code{resp.text} & \code{str} & body decoded with the guessed encoding \\
+\code{resp.json()} & \code{dict} or \code{list} & raises if body is not JSON \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{typecheck}
+
+A \code{Session} reuses the TCP connection between calls, which is why it is faster when you call
+the same host many times (the book measured about 3.5x faster than separate calls).
+
+\begin{pycode}
+import requests
+
+with requests.Session() as s:
+    s.headers.update({"Authorization": "Bearer <your-key>"})
+    for q in ["a", "b", "c"]:
+        r = s.get("http://127.0.0.1:8765/answer", params={"q": q}, timeout=5)
+\end{pycode}
+
+\subsection{Other clients: httpx and aiohttp}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X X@{}}
+\toprule
+\textbf{Library} & \textbf{Sync / async} & \textbf{Pick it when} \\
+\midrule
+\code{urllib} & sync, stdlib & no installs allowed; tiny scripts \\
+\code{requests} & sync only & simple blocking calls \\
+\code{httpx} & both, \code{requests}-like API & you want sync now and async later; the Anthropic SDK is built on it \\
+\code{aiohttp} & async only (also a server) & purely async programs \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Async pays off when you wait on many remote hosts: most of the time is waiting for I/O, not
+computing. Here is the shape of an async fan-out (syntax-checked; needs \code{pip install httpx}):
+
+\begin{pycode}
+import asyncio
+import httpx
+
+async def ask_all(questions):
+    async with httpx.AsyncClient(timeout=10) as client:
+        tasks = [
+            client.get("http://127.0.0.1:8765/answer", params={"q": q})
+            for q in questions
+        ]
+        responses = await asyncio.gather(*tasks)
+    return [r.json() for r in responses]
+
+answers = asyncio.run(ask_all(["one", "two", "three"]))
+\end{pycode}
+
+%MD
+%```text
+%sequential: [wait 1][wait 2][wait 3][wait 4]        total = sum of waits
+%concurrent: [wait 1]
+%            [wait 2]                                total = the slowest wait
+%            [wait 3]
+%            [wait 4]
+%            ---------------------------------------> time
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[x=0.5cm,y=0.45cm,font=\sffamily\scriptsize]
+  \node[anchor=east] at (-0.2,5.2) {sequential};
+  \foreach \i in {0,1,2,3} \fill[cblue!60] (\i*3,5) rectangle (\i*3+2.8,5.5);
+  \node[anchor=east] at (-0.2,2.4) {concurrent};
+  \foreach \i in {0,1,2,3} \fill[cgreen!60] (0,\i*0.8+1) rectangle (2.8,\i*0.8+1.5);
+  \draw[->] (0,0) -- (13,0) node[right]{time};
+  \node[text=cgray,anchor=west] at (3.4,2.4) {the four waits overlap: total $\approx$ the slowest one};
+  \node[text=cgray,anchor=west] at (12.2,5.25) {total = sum};
+\end{tikzpicture}
+\end{center}
+
+\begin{lab}
+Ten stand-in ``API calls'' that each wait 0.1 s (a \code{sleep}), run three ways on this machine:
+sequential 1.0 s, thread pool 0.1 s, \code{asyncio.gather} 0.1 s. Waiting overlaps; computing
+does not (see Chapter 21).
+\end{lab}
+
+% ------------------------------------------------------------
+\section{Web Servers}
+
+\subsection{The simplest Python web server}
+
+\begin{rawcode}
+$ python -m http.server 9999
+Serving HTTP on 0.0.0.0 port 9999 ...
+\end{rawcode}
+
+It serves files from the current folder and logs each hit as
+\code{127.0.0.1 - - [date] "GET / HTTP/1.1" 200 -} (client IP, two unused fields, time, request line,
+status). Stop with Ctrl+C. \code{0.0.0.0} means ``listen on every network interface''; for tests
+prefer \code{--bind 127.0.0.1} so only your machine can reach it. Use it for quick demos only:
+it is slow and cannot run dynamic code.
+
+\subsection{From CGI to WSGI to ASGI}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X X@{}}
+\toprule
+\textbf{Era} & \textbf{How server and Python code connect} & \textbf{Problem / benefit} \\
+\midrule
+CGI & start a new program per request & slow: startup cost every time \\
+Embedded (\code{mod\_php}, \code{mod\_python}) & interpreter lives inside the web server & fast, but tied to that server \\
+WSGI & standard sync interface between server and Python app & portable; one request at a time per worker \\
+ASGI & the async counterpart of WSGI & many waiting requests per worker (\code{async}/\code{await}) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+%MD
+%```mermaid
+%flowchart LR
+%    CL["Browser / script"] -->|HTTP| WS["Web server (nginx, uvicorn)"]
+%    WS -->|"WSGI / ASGI"| FW["Framework (routing, validation)"]
+%    FW -->|call| H["Your handler function"]
+%    H -.->|"return value -> status + JSON body"| CL
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\sffamily\small,>=Stealth]
+  \node[w24n=cgray]   (cl) at (0,0)    {Browser /\\script};
+  \node[w24n=cblue]   (ws) at (3.9,0)  {Web server\\{\scriptsize nginx, uvicorn}};
+  \node[w24n=cpurple] (fw) at (8.7,0)  {Framework\\{\scriptsize routing, validation}};
+  \node[w24n=cgreen]  (h)  at (13.0,0) {Your handler\\{\scriptsize function}};
+  \draw[->,thick] (cl) -- node[above,font=\scriptsize]{HTTP} (ws);
+  \draw[->,thick] (ws) -- node[above,font=\scriptsize]{WSGI/ASGI} (fw);
+  \draw[->,thick] (fw) -- node[above,font=\scriptsize]{call} (h);
+  \draw[->,thick,dashed,cgray] (h.south) -- ++(0,-0.7) -| node[pos=0.25,below,font=\scriptsize]{return value $\to$ status + JSON body} (cl.south);
+\end{tikzpicture}
+\end{center}
+
+\subsection{Apache, nginx and other servers}
+
+\begin{itemize}[leftmargin=*]
+\item \textbf{Apache} runs WSGI apps through \code{mod\_wsgi} (embedded or daemon mode). Most of the
+work is editing Apache's config.
+\item \textbf{nginx} has no embedded Python. It sits in front and forwards requests to a separate
+WSGI server such as uWSGI or Gunicorn.
+\item \textbf{Other Python servers} fall in two groups: multi-process/multi-thread (CherryPy,
+Waitress) and event-based (Tornado, gevent, Gunicorn workers). For ASGI apps, \code{uvicorn} is
+the usual choice.
+\end{itemize}
+
+% ------------------------------------------------------------
+\section{Web Server Frameworks}
+
+A web server speaks HTTP; a \textbf{framework} is what you write against. The main jobs:
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+\textbf{Job} & \textbf{Meaning} \\
+\midrule
+Routing & map a URL and verb to a Python function \\
+Parameters & read path, query and body values; validate type/range \\
+Auth & authentication (who are you?) and authorization (what may you do?) \\
+Sessions & keep state across requests \\
+Responses & return data plus the right status code \\
+Static files, templates & serve files; fill HTML with values \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Bottle}
+
+One file, no dependencies (\code{pip install bottle}). The decorator binds a URL to a function;
+\code{<thing>} captures part of the path.
+
+\begin{pycode}
+from bottle import route, run
+
+@route("/")
+def home():
+    return "model service is up"
+
+@route("/greet/<name>")
+def greet(name):
+    return f"Hello, {name}!"
+
+run(host="localhost", port=9999)
+\end{pycode}
+
+\subsection{Flask}
+
+Flask is Bottle's bigger cousin: more extensions, Jinja2 templates. Needs \code{pip install flask}.
+Path values and query values arrive differently:
+
+\begin{pycode}
+from flask import Flask, request, render_template_string
+
+app = Flask(__name__)
+
+@app.route("/greet/<name>")            # path parameter
+def greet(name):
+    return f"Hello, {name}!"
+
+@app.route("/search")                  # /search?q=cats&top=3
+def search():
+    q = request.args.get("q", "")      # query parameters: strings!
+    top = int(request.args.get("top", 5))
+    page = "<p>{{ q }} (top {{ top }})</p>"      # Jinja2 template
+    return render_template_string(page, q=q, top=top)
+
+if __name__ == "__main__":
+    app.run(port=9999, debug=True)
+\end{pycode}
+
+\begin{trap}
+\code{debug=True} shows an interactive debugger page. Never use it on a server reachable from the
+internet. And query values are always \emph{strings}; convert them yourself (\code{int(...)}), or
+use a framework that validates (below).
+\end{trap}
+
+\subsection{Django, FastAPI, Litestar}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X X@{}}
+\toprule
+\textbf{Framework} & \textbf{Style} & \textbf{Best for} \\
+\midrule
+Bottle & one file, minimal & learning, tiny tools \\
+Flask & small core + extensions, sync (WSGI) & simple sites and APIs \\
+Django & ``batteries included'': ORM, admin pages, auth & large database-backed sites; common in job ads \\
+FastAPI & ASGI, type hints, auto docs, Pydantic validation & JSON APIs, \textbf{model-serving services} \\
+Litestar & similar to FastAPI, more built-ins & alternative to FastAPI \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+FastAPI is the one an AI engineer will use most. You describe the request and response with
+Pydantic models; FastAPI validates input and builds interactive docs at \code{/docs}. Needs
+\code{pip install fastapi uvicorn}; syntax-checked, not run. The model call is a stub.
+
+\begin{pycode}
+from fastapi import FastAPI
+from pydantic import BaseModel
+
+app = FastAPI()
+
+class AskIn(BaseModel):
+    question: str
+    max_tokens: int = 256
+
+class AskOut(BaseModel):
+    answer: str
+
+def ask_model(question: str, max_tokens: int) -> str:
+    return f"stub answer to: {question}"     # swap in a real SDK call
+
+@app.post("/ask", response_model=AskOut)
+def ask(body: AskIn) -> AskOut:
+    return AskOut(answer=ask_model(body.question, body.max_tokens))
+
+# run:  uvicorn app:app --reload      then open http://127.0.0.1:8000/docs
+\end{pycode}
+
+What the validation does, shown with Pydantic alone (this part really ran):
+
+\begin{pycode}
+from pydantic import BaseModel, ValidationError
+
+class AskIn(BaseModel):
+    question: str
+    max_tokens: int = 256
+
+print(AskIn(question="hi"))
+print(AskIn(question="hi", max_tokens="300"))     # str "300" -> int 300
+try:
+    AskIn(question="hi", max_tokens="lots")
+except ValidationError as e:
+    print(e.error_count(), e.errors()[0]["type"], e.errors()[0]["loc"])
+\end{pycode}
+\begin{rawcode}
+question='hi' max_tokens=256
+question='hi' max_tokens=300
+1 int_parsing ('max_tokens',)
+\end{rawcode}
+
+In FastAPI, bad input like that returns a \textbf{422} response automatically; your function never
+runs. Compare Flask, where you would write those checks by hand.
+
+\begin{trap}
+Inside \code{async def} handlers, a blocking call (\code{requests.get}, \code{time.sleep}, a
+synchronous SDK call) freezes the whole event loop and every other request. Either use plain
+\code{def} (FastAPI runs it in a thread) or use the async client.
+\end{trap}
+
+\begin{boss}[: statelessness is why chat needs a history list]
+HTTP forgets you between requests. A web service that answers questions is the same: if the second
+request does not carry the first question, the server has no idea what ``it'' refers to. The fix is
+always the same: either the \textbf{client sends the context each time} (as model APIs do with the
+message history), or the server \textbf{stores state} and finds it again using an ID the client
+sends back (a cookie, session ID or conversation ID).
+
+%MD
+%```mermaid
+%sequenceDiagram
+%    participant C as Client
+%    participant S as Server
+%    C->>S: Q1: who wrote Dune?
+%    S-->>C: A1: Frank Herbert
+%    C->>S: Q2 alone: what else did he write?
+%    Note over S: Who is "he"? The server has no memory.
+%    C-->>S: Fix: send Q1 + A1 + Q2 together, or a session ID
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\sffamily\small,>=Stealth]
+  \node[w24n=cblue,minimum width=2cm]  (c) at (0,0) {Client};
+  \node[w24n=cgreen,minimum width=2cm] (s) at (10,0) {Server};
+  \draw[dashed,cgray] (c.south) -- (0,-3.2); \draw[dashed,cgray] (s.south) -- (10,-3.2);
+  \draw[->,thick,cblue] (0,-0.9) -- node[above,font=\scriptsize]{Q1: ``who wrote Dune?''} (10,-0.9);
+  \draw[<-,thick,cgreen] (0,-1.5) -- node[above,font=\scriptsize]{A1: ``Frank Herbert''} (10,-1.5);
+  \draw[->,thick,cred] (0,-2.3) -- node[above,font=\scriptsize]{Q2 alone: ``what else did \emph{he} write?''} (10,-2.3);
+  \node[text=cred,font=\scriptsize] at (5,-2.85) {server: who is ``he''? (no memory)};
+  \draw[->,thick,cgreen,dashed] (0,-3.7) -- node[above,font=\scriptsize]{fix: send Q1 + A1 + Q2 together, or a session ID} (10,-3.7);
+\end{tikzpicture}
+\end{center}
+\end{boss}
+
+% ------------------------------------------------------------
+\section{Database Frameworks}
+
+Web and databases go together. Options, from most work to least:
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+\textbf{Approach} & \textbf{What you do} \\
+\midrule
+Build it yourself & a framework (Bottle/Flask) + a DB package (DB-API, SQLAlchemy) + a driver (PyMySQL) \\
+Web/DB combo tools & Connexion, Datasette, sandman2, Flask-Restless expose a database as an API \\
+Framework with a built-in ORM & Django (also gives automatic admin pages for internal use) \\
+Schemaless store & a NoSQL database (Chapter 23) when row shapes differ a lot \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+% ------------------------------------------------------------
+\section{Web Services and Automation}
+
+\subsection{webbrowser and webview}
+
+\code{webbrowser.open(url)} asks your own browser to show a page; it returns \code{True} if it
+could try. (\code{import antigravity} is a joke that calls it.) \code{webview} (third party,
+\code{pywebview}) instead shows the page in its own native window.
+
+\begin{pycode}
+import webbrowser
+webbrowser.open("http://127.0.0.1:8000/docs")    # opens your default browser
+\end{pycode}
+
+\subsection{Web APIs and REST}
+
+Instead of HTML for people, a web API returns data (usually JSON) for programs. A
+\textbf{RESTful} service uses HTTP verbs in set ways, so the \emph{verb} says what you do and the
+\emph{URL} says to what.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X l l@{}}
+\toprule
+\textbf{Verb} & \textbf{Meaning} & \textbf{Changes data?} & \textbf{Example} \\
+\midrule
+GET & read a resource & no & \code{GET /runs/42} \\
+HEAD & headers only, no body & no & \code{HEAD /runs/42} \\
+POST & create a resource & yes & \code{POST /runs} \\
+PUT & replace (or create) & yes & \code{PUT /runs/42} \\
+PATCH & change part of it & yes & \code{PATCH /runs/42} \\
+DELETE & remove it & yes & \code{DELETE /runs/42} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{gamerule}
+GET must never change data. Caches, browsers and crawlers assume GET is safe to repeat.
+\end{gamerule}
+
+Model APIs are exactly this: a POST with a JSON body (model name, messages) returns a JSON body
+(the reply, usage counts). The SDK wraps it, but the traffic is plain HTTP.
+
+%MD
+%```mermaid
+%flowchart LR
+%    A["Your code"] --> B["SDK / client"] --> C["POST + JSON"] --> D["Model API"]
+%    D -.->|"reply: status + JSON, parsed into an object or dict"| A
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\sffamily\small,>=Stealth]
+  \node[w24n=cgray]   (code) at (0,0)    {Your code};
+  \node[w24n=cblue]   (sdk)  at (3.4,0)  {SDK / client};
+  \node[w24n=cgold]   (http) at (7.0,0)  {\code{POST} + JSON};
+  \node[w24n=cgreen]  (api)  at (10.6,0) {Model API};
+  \draw[->,thick] (code) -- (sdk); \draw[->,thick] (sdk) -- (http); \draw[->,thick] (http) -- (api);
+  \draw[<-,thick,cgray,dashed] (code.south) -- ++(0,-0.5) -| (api.south);
+  \node[font=\scriptsize,text=cgray,fill=white] at (5.3,-0.5) {reply: status + JSON, parsed into an object or dict};
+\end{tikzpicture}
+\end{center}
+
+\subsection{WebSockets}
+
+HTTP is request-then-response, and the server cannot start talking. A \textbf{WebSocket} keeps one
+two-way connection open: good for chat, live notifications, collaboration and games. The book's
+example uses the third-party \code{websockets} package (\code{pip install websockets}); the
+version below is my own, syntax-checked but not run.
+
+\begin{pycode}
+import asyncio
+from websockets.asyncio.server import serve
+
+async def shout(ws):
+    async for message in ws:               # one connection, many messages
+        await ws.send(message.upper())
+
+async def main():
+    async with serve(shout, "localhost", 8765):
+        await asyncio.get_running_loop().create_future()   # run forever
+
+asyncio.run(main())
+\end{pycode}
+
+FastAPI can host WebSocket routes beside normal ones. Note that LLM APIs usually stream tokens with
+\textbf{server-sent events} over normal HTTP (one-way, server to client), which is simpler than a
+WebSocket.
+
+\subsection{Webhooks}
+
+A webhook flips the direction: you give a service a URL, and \emph{it} calls you (as an HTTP
+client) when something happens, such as a finished batch job. Your service just needs a POST
+route that returns 2xx quickly. FastAPI documents this well.
+
+% ------------------------------------------------------------
+\section{Web Frontends}
+
+A frontend faces the user; it is normally HTML, CSS and JavaScript talking to a backend by API.
+Two Python-friendly ways to avoid writing much JavaScript:
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+\textbf{Tool} & \textbf{Idea} \\
+\midrule
+htmx & a small JavaScript library driven by HTML attributes: any element can send a request on any event and put the returned HTML into any part of the page \\
+FastHTML & Python functions such as \code{Div()} and \code{P()} build the HTML, so the whole app is Python (\code{pip install python-fasthtml}) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{pycode}
+from fasthtml.common import FastHTML, serve
+
+app = FastHTML()
+
+@app.get("/")
+def home():
+    return "<p>Yes, it works.</p>"
+
+serve()          # dev server, default http://localhost:5001
+\end{pycode}
+
+Syntax-checked only. For data dashboards, Chapter 25 lists Python-only tools such as Streamlit.
+
+% ------------------------------------------------------------
+\section{Crawl and Scrape}
+
+A \textbf{crawler} (spider) fetches pages automatically; a \textbf{scraper} pulls out the data you
+want. Use an API if one exists; scrape only when data is on the page and nowhere else.
+
+%MD
+%```mermaid
+%flowchart LR
+%    U["URL list"] --> F["Fetch (HTTP GET)"] --> H["HTML (messy text)"] --> P["Parse (find tags)"] --> D["Data (list / dict)"]
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\sffamily\small,>=Stealth]
+  \node[w24n=cblue]   (u) at (0,0)    {URL list};
+  \node[w24n=cgray]   (f) at (3.2,0)  {Fetch\\{\scriptsize HTTP GET}};
+  \node[w24n=cgold]   (h) at (6.4,0)  {HTML\\{\scriptsize messy text}};
+  \node[w24n=cpurple] (p) at (9.6,0)  {Parse\\{\scriptsize find tags}};
+  \node[w24n=cgreen]  (d) at (12.8,0) {Data\\{\scriptsize list / dict}};
+  \foreach \a/\b in {u/f,f/h,h/p,p/d} \draw[->,thick] (\a) -- (\b);
+\end{tikzpicture}
+\end{center}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+\textbf{Tool} & \textbf{Role} \\
+\midrule
+Scrapy & full crawl-and-scrape framework; powerful but more setup \\
+Beautiful Soup (\code{beautifulsoup4}) & parses HTML you already have, even broken HTML \\
+requests-html & fetch + parse in one package \\
+\code{html.parser} (stdlib) & enough for simple jobs \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Do not parse HTML with regular expressions; real pages are messy. A runnable stdlib version that
+collects links:
+
+\begin{pycode}
+from html.parser import HTMLParser
+
+class LinkFinder(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.links = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "a":
+            self.links.append(dict(attrs).get("href"))
+
+page = """<html><body>
+<a href="/docs">Docs</a> <p>text <a href="https://x.test/a">A</a>
+<a name="anchor-only">no href</a>
+</body></html>"""
+finder = LinkFinder()
+finder.feed(page)
+print(finder.links)
+\end{pycode}
+\begin{rawcode}
+['/docs', 'https://x.test/a', None]
+\end{rawcode}
+
+Note the \code{None}: an \code{<a>} tag without \code{href}. Filter it out before using the list.
+With Beautiful Soup the same job is shorter (needs \code{pip install beautifulsoup4}; syntax-checked):
+
+\begin{pycode}
+from bs4 import BeautifulSoup
+
+def get_links(html: str) -> list[str]:
+    doc = BeautifulSoup(html, features="html.parser")
+    return [a["href"] for a in doc.find_all("a", href=True)]
+\end{pycode}
+
+\begin{trap}
+Be a polite scraper: read \code{robots.txt}, slow down, and check the site's terms. The stdlib
+can parse the rules:
+\end{trap}
+
+\begin{pycode}
+from urllib.robotparser import RobotFileParser
+
+rules = ["User-agent: *", "Disallow: /private/", "Crawl-delay: 5"]
+rp = RobotFileParser()
+rp.parse(rules)
+print(rp.can_fetch("my-bot", "https://site.test/docs/a"))
+print(rp.can_fetch("my-bot", "https://site.test/private/x"))
+print(rp.crawl_delay("my-bot"))
+\end{pycode}
+\begin{rawcode}
+True
+False
+5
+\end{rawcode}
+
+For AI work, scraped text often becomes the input for chunking and embeddings, so clean HTML to
+plain text early and keep the source URL with every piece.
+
+% ------------------------------------------------------------
+\section{Let's Watch a Movie: a client in four small functions}
+
+The book ends with a full program: search an API, list results, let the user pick one, open it in
+the browser. The lesson is its \emph{shape}: one small function per job. Here is the same shape
+against our local stub (it ran).
+
+%MD
+%```mermaid
+%flowchart LR
+%    M["main()"] -.-> S
+%    M -.-> C
+%    M -.-> D
+%    S["search(text): HTTP + JSON"] --> C["choose(rows): list, pick one"] --> D["display(item): open / print"]
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\sffamily\small,>=Stealth]
+  \node[w24n=cblue]   (s) at (0,0)    {\code{search(text)}\\{\scriptsize HTTP + JSON}};
+  \node[w24n=cgold]   (c) at (4.4,0)  {\code{choose(rows)}\\{\scriptsize list, pick one}};
+  \node[w24n=cgreen]  (d) at (8.8,0)  {\code{display(item)}\\{\scriptsize open / print}};
+  \node[w24n=cgray]   (m) at (4.4,1.5) {\code{main()}};
+  \draw[->,thick] (s) -- (c); \draw[->,thick] (c) -- (d);
+  \draw[->,dashed,cgray] (m) -- (s); \draw[->,dashed,cgray] (m) -- (c); \draw[->,dashed,cgray] (m) -- (d);
+\end{tikzpicture}
+\end{center}
+
+\begin{pycode}
+import json
+import urllib.request
+from urllib.parse import urlencode
+from web_server import BASE
+
+
+def search(text):
+    url = f"{BASE}/answer?{urlencode({'q': text})}"
+    with urllib.request.urlopen(url, timeout=5) as resp:
+        return json.load(resp)
+
+
+def choose(rows):
+    for num, row in enumerate(rows):
+        print(f"{num}: {row['answer']} ({row['tokens']} words)")
+    return rows[0]            # a real program would call input()
+
+
+def main():
+    rows = [search(t) for t in ("hello world", "what is rag")]
+    picked = choose(rows)
+    print("picked:", picked["question"])
+
+
+main()
+\end{pycode}
+\begin{rawcode}
+0: HELLO WORLD (2 words)
+1: WHAT IS RAG (3 words)
+picked: hello world
+\end{rawcode}
+
+Most real APIs require a key, sent in a header and never hard-coded. Anonymous APIs are rare
+because free open resources get abused. Keep keys in environment variables.
+
+% ------------------------------------------------------------
+\section{Practice and wrap-up}
+
+The web is clients, servers and the services between them. As an AI engineer you will mostly write
+JSON clients and small FastAPI-style services.
+
+\begin{practice}
+\begin{enumerate}[leftmargin=*]
+\item Using only \code{urllib}, write a function that GETs a JSON URL with a query dict and a
+timeout, and returns a dict. What type does each step return?
+\item A request returns status 429, another 404, another 503. Which would you retry, and why?
+\item Write a Flask or FastAPI route \code{/echo} that takes \code{thing}, \code{height} and
+\code{color} as query parameters and returns them as JSON. Which of them must you convert?
+\item Why can a server not answer ``and what about the second one?'' by itself? Name two fixes.
+\item When is \code{httpx} with \code{asyncio.gather} faster than a plain loop of \code{requests},
+and when is it not?
+\item Extract all \code{href} values from an HTML string with \code{html.parser}, skipping tags
+that have none.
+\end{enumerate}
+\end{practice}
+
+\begin{achievement}{Web client and server}
+You can now:
+\begin{itemize}[leftmargin=*]
+\item read a raw HTTP request and response and name each part;
+\item call a JSON API from Python and handle errors, timeouts and the bytes/str/dict steps;
+\item choose between WSGI and ASGI frameworks and sketch a validated FastAPI endpoint;
+\item explain why HTTP is stateless and how chat history works around it;
+\item pull links out of HTML and respect \code{robots.txt}.
+\end{itemize}
+\end{achievement}

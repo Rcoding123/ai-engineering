@@ -1,0 +1,1618 @@
+% ============================================================
+%  Introducing Python, chapter 23: Data in a Box: Persistent Storage
+% ============================================================
+\chapter{Data in a Box: Persistent Storage}
+
+\tikzset{nb/.style={draw=cblue,fill=cblue!10,rounded corners=2pt,font=\small\sffamily,
+  inner sep=4pt,align=center,minimum height=6.5mm}}
+
+Variables vanish when a program ends. This chapter shows how to keep data: plain files,
+structured text (CSV, JSON, XML, TOML), binary files, SQL databases and key-value stores.
+The SQL part matters most for a working engineer: you will store eval runs, costs and
+cached prompts in tables like the ones here.
+
+% ------------------------------------------------------------
+\section{Text Files}
+
+RAM is fast but forgets everything without power. A disk is slower but keeps data.
+\emph{Persistence} means writing data to disk (or a server) and reading it back later.
+The simplest form is a flat text file (file reading and writing are in Chapter 20).
+
+A \emph{record} is one chunk of related data made of \emph{fields}. In a \emph{padded}
+text file, every field has a fixed width, so every line is the same length. Then
+\code{seek()} can jump to record \(n\) at byte \(n \times\) line length without reading
+the rest.
+
+\begin{pycode}
+import os
+import tempfile
+
+os.chdir(tempfile.mkdtemp())           # scratch folder for the examples
+with open("fixed.txt", "w", encoding="utf-8", newline="\n") as f:
+    for name, score in [("alpha", 91), ("beta", 78), ("gamma", 85)]:
+        f.write(f"{name:<8}{score:>4}\n")      # 8 + 4 + newline = 13 chars
+with open("fixed.txt", "r", encoding="utf-8", newline="") as f:
+    f.seek(13)                                 # skip record 0
+    print(repr(f.read(13)))
+\end{pycode}
+\begin{rawcode}
+'beta      78\n'
+\end{rawcode}
+
+Fixed-width files are rare today. They are shown because they explain what databases do
+for you: find a row without scanning everything.
+
+The picture to keep in mind is a ladder. Move up only when the lower rung hurts.
+
+%MD
+%```mermaid
+%flowchart LR
+%    A["text file<br/>lines"] --> B["CSV, JSON, TOML<br/>structured files"] --> C["SQLite<br/>one file, SQL"] --> D["PostgreSQL, MySQL<br/>server, many users"] --> E["Redis, NoSQL<br/>special shapes"]
+%```
+%Direction of travel: more data, more users, more structure, more setup.
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[r/.style={nb,minimum width=2.5cm,font=\scriptsize\sffamily},>=Stealth]
+  \node[r,draw=cgray,fill=cgray!10]   (a) at (0,0)   {text file\\lines};
+  \node[r,draw=cblue,fill=cblue!10]   (b) at (2.9,0) {CSV, JSON, TOML\\structured files};
+  \node[r,draw=cgreen,fill=cgreen!10] (c) at (5.8,0) {SQLite\\one file, SQL};
+  \node[r,draw=cpurple,fill=cpurple!10] (d) at (8.7,0) {PostgreSQL, MySQL\\server, many users};
+  \node[r,draw=cgold,fill=cgold!15]   (e) at (11.6,0) {Redis, NoSQL\\special shapes};
+  \foreach \x/\y in {a/b,b/c,c/d,d/e} \draw[->] (\x) -- (\y);
+  \draw[->,thick,cgray] (0,-0.9) -- node[below,font=\scriptsize\sffamily]
+    {more data, more users, more structure, more setup} (11.6,-0.9);
+\end{tikzpicture}
+\end{center}
+
+% ------------------------------------------------------------
+\section{Tabular and Delimited Text Files}
+
+Lines are the only structure in plain text. These formats add more:
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+\textbf{Format} & \textbf{Structure by} & \textbf{Good for} \\
+\midrule
+CSV, TSV & delimiter (comma, tab, \code{|}) & tables, spreadsheet exchange \\
+XML, HTML & \code{<tags>} & documents, feeds, old enterprise data \\
+JSON & braces, brackets, quotes & APIs, nested data, configs \\
+YAML & indentation & human-edited configs \\
+TOML & \code{[sections]}, \code{key = value} & configs (stdlib reader) \\
+INI (\code{configparser}) & \code{[sections]} & simple settings \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{CSV}
+
+Do not split lines on commas yourself. Fields may contain commas, quotes or newlines, and
+only the \code{csv} module handles all of that. It also works with other delimiters
+(\code{delimiter="\textbackslash t"}).
+
+%MD
+%```mermaid
+%flowchart LR
+%    F["file on disk<br/>model,note<br/>m-small,fast cheap (quoted)<br/>m-big,says hi (quoted)"] --> R["csv.reader: list of str<br/>['model', 'note']<br/>['m-small', 'fast, cheap']"]
+%    F --> D["csv.DictReader: first line = keys<br/>{'model': 'm-small', 'note': 'fast, cheap'}"]
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[c/.style={draw=cgray,minimum height=6mm,font=\ttfamily\scriptsize,
+    inner sep=3pt},>=Stealth]
+  \node[c,fill=cgray!8,align=left,text width=3.8cm] (f) at (0,0)
+    {model,note\\m-small,"fast, cheap"\\m-big,"says ""hi"""};
+  \node[font=\scriptsize\sffamily,above=1mm of f] {file on disk};
+  \node[c,fill=cblue!10,align=left,text width=4.9cm] (l) at (6.2,0.6)
+    {['model', 'note']\\[0pt] ['m-small', 'fast, cheap']\\[0pt] ['m-big', 'says "hi"']};
+  \node[font=\scriptsize\sffamily,above=1mm of l] {\code{csv.reader}: list of str};
+  \node[c,fill=cgreen!10,align=left,text width=5.6cm] (d) at (6.2,-1.0)
+    {\{'model': 'm-small', 'note': 'fast, cheap'\}\\[0pt] \{'model': 'm-big', 'note': 'says "hi"'\}};
+  \node[font=\scriptsize\sffamily,below=1mm of d] {\code{csv.DictReader}: first line = keys};
+  \draw[->] (f.east) -- (l.west);
+  \draw[->] (f.east) -- (d.west);
+\end{tikzpicture}
+\end{center}
+
+\begin{pycode}
+import csv
+from pathlib import Path
+
+rows = [["model", "note"], ["m-small", "fast, cheap"], ["m-big", 'says "hi"']]
+with open("runs.csv", "w", newline="", encoding="utf-8") as f:
+    csv.writer(f).writerows(rows)
+print(Path("runs.csv").read_text(encoding="utf-8"))
+
+with open("runs.csv", newline="", encoding="utf-8") as f:
+    for row in csv.reader(f):
+        print(row)
+
+with open("runs.csv", newline="", encoding="utf-8") as f:
+    data = list(csv.DictReader(f))
+print(data[0], type(data[0]))
+
+with open("scores.csv", "w", newline="", encoding="utf-8") as f:
+    w = csv.DictWriter(f, fieldnames=["model", "score"])
+    w.writeheader()
+    w.writerow({"model": "m-small", "score": 0.82})
+with open("scores.csv", newline="", encoding="utf-8") as f:
+    r = next(csv.DictReader(f))
+print(r, type(r["score"]))
+\end{pycode}
+\begin{rawcode}
+model,note
+m-small,"fast, cheap"
+m-big,"says ""hi"""
+
+['model', 'note']
+['m-small', 'fast, cheap']
+['m-big', 'says "hi"']
+{'model': 'm-small', 'note': 'fast, cheap'} <class 'dict'>
+{'model': 'm-small', 'score': '0.82'} <class 'str'>
+\end{rawcode}
+
+\begin{typecheck}
+CSV has no types. Every field comes back as \code{str}, even \code{0.82}. Convert yourself:
+\code{float(r["score"])}. A row is a \code{list[str]} from \code{reader}, a \code{dict[str, str]}
+from \code{DictReader} (plain \code{dict} in modern Python).
+\end{typecheck}
+
+\begin{trap}[: open CSV files with \code{newline=""}]
+Without it, Windows can write blank lines between rows and can break quoted fields that
+contain newlines. Also pass \code{encoding="utf-8"} so the file means the same on every
+machine.
+\end{trap}
+
+\subsection{XML}
+
+XML nests data in tags. A tag can have attributes, text and child tags. Python's
+\code{xml.etree.ElementTree} module parses it into a tree.
+
+%MD
+%```mermaid
+%flowchart TD
+%    M["models"] --> F1["family name=small"]
+%    M --> F2["family name=big"]
+%    F1 --> A["model price=0.10<br/>text: m-s1"]
+%    F1 --> B["model price=0.25<br/>text: m-s2"]
+%    F2 --> C["model price=3.00<br/>text: m-b1"]
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[e/.style={nb,font=\scriptsize\ttfamily,inner sep=3pt},>=Stealth,
+    level distance=1.2cm,level 1/.style={sibling distance=7cm},level 2/.style={sibling distance=3.6cm}]
+  \node[e,draw=cpurple,fill=cpurple!10] {models}
+    child {node[e,draw=cblue,fill=cblue!10] {family name="small"}
+      child {node[e,draw=cgreen,fill=cgreen!10,align=center] {model price="0.10"\\text: m-s1}}
+      child {node[e,draw=cgreen,fill=cgreen!10,align=center] {model price="0.25"\\text: m-s2}}}
+    child {node[e,draw=cblue,fill=cblue!10] {family name="big"}
+      child {node[e,draw=cgreen,fill=cgreen!10,align=center] {model price="3.00"\\text: m-b1}}};
+\end{tikzpicture}
+\end{center}
+
+\begin{pycode}
+import xml.etree.ElementTree as ET
+
+xml_text = """<models>
+  <family name="small">
+    <model price="0.10">m-s1</model>
+    <model price="0.25">m-s2</model>
+  </family>
+  <family name="big">
+    <model price="3.00">m-b1</model>
+  </family>
+</models>"""
+root = ET.fromstring(xml_text)          # parse from a str
+print(root.tag, len(root))
+for fam in root:
+    print(fam.tag, fam.attrib, len(fam))
+for m in root.iter("model"):             # every <model> at any depth
+    print(m.text, m.attrib["price"], type(m.attrib["price"]))
+print(root.find("family[@name='big']/model").text)
+\end{pycode}
+\begin{rawcode}
+models 2
+family {'name': 'small'} 2
+family {'name': 'big'} 1
+m-s1 0.10 <class 'str'>
+m-s2 0.25 <class 'str'>
+m-b1 3.00 <class 'str'>
+m-b1
+\end{rawcode}
+
+\begin{typecheck}
+\code{.tag} is a \code{str}, \code{.attrib} is a \code{dict[str, str]}, \code{.text} is a
+\code{str} or \code{None}, and \code{len(element)} counts child elements. Numbers inside XML
+are text until you convert them. \code{ET.parse(path)} reads a file; \code{ET.fromstring(s)}
+reads a string.
+\end{typecheck}
+
+Other standard parsers: \code{xml.dom} loads the whole tree and lets you move around
+freely (like a browser's DOM); \code{xml.sax} streams through the file without holding it
+all in memory, so it suits very large files.
+
+\begin{trap}[: untrusted XML can attack you]
+The ``billion laughs'' attack nests entity definitions so a few lines expand to gigabytes
+in memory. For XML you did not write, use the \code{defusedxml} package (a drop-in
+safe version of these parsers) instead of the plain standard-library ones.
+\end{trap}
+
+HTML looks like XML but is usually messy and is meant for display, not data exchange. It
+is handled with scraping tools in Chapter 24.
+
+\subsection{JSON}
+
+JSON is the standard exchange format for APIs and the closest match to Python data. The
+module is \code{json}: \code{dumps}/\code{loads} work with strings, \code{dump}/\code{load}
+with files.
+
+\begin{pycode}
+import json
+
+cfg = {"model": "m-small", "temp": 0.2, "stop": ["\n"],
+       "seed": None, "ok": True}
+text = json.dumps(cfg)
+print(text)
+print(json.dumps(cfg, indent=2, sort_keys=True))
+back = json.loads(text)
+print(back == cfg, back["seed"], back["ok"])
+with open("cfg.json", "w", encoding="utf-8") as f:
+    json.dump(cfg, f)
+with open("cfg.json", encoding="utf-8") as f:
+    print(json.load(f)["temp"])
+try:
+    json.loads("{'a': 1}")
+except json.JSONDecodeError as e:
+    print("JSONDecodeError:", e)
+\end{pycode}
+\begin{rawcode}
+{"model": "m-small", "temp": 0.2, "stop": ["\n"], "seed": null, "ok": true}
+{
+  "model": "m-small",
+  "ok": true,
+  "seed": null,
+  "stop": [
+    "\n"
+  ],
+  "temp": 0.2
+}
+True None True
+0.2
+JSONDecodeError: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)
+\end{rawcode}
+
+\begin{typecheck}
+\begin{center}
+\begin{tabular}{@{}l l@{}}
+\toprule
+\textbf{Python} & \textbf{JSON} \\
+\midrule
+\code{dict} (str keys) & object \code{\{...\}} \\
+\code{list}, \code{tuple} & array \code{[...]} (a tuple comes back as a list) \\
+\code{str} & string (double quotes only) \\
+\code{int}, \code{float} & number \\
+\code{True}, \code{False}, \code{None} & \code{true}, \code{false}, \code{null} \\
+\bottomrule
+\end{tabular}
+\end{center}
+\code{dumps} returns \code{str}. \code{set}, \code{datetime}, \code{Decimal} and your own
+classes are not JSON serializable and raise \code{TypeError}. JSON strings need double
+quotes: \code{\{'a': 1\}} is invalid JSON even though it is valid Python.
+\end{typecheck}
+
+Teach \code{json} about extra types with a \code{default} function. It is called only for
+objects the module cannot handle, and must return something serializable:
+
+\begin{pycode}
+import datetime
+import json
+
+def to_json(obj):
+    if isinstance(obj, datetime.datetime):
+        return obj.isoformat()
+    raise TypeError(f"cannot serialize {type(obj).__name__}")
+
+stamp = datetime.datetime(2026, 1, 5, 9, 30)
+print(json.dumps({"at": stamp}, default=to_json))
+print(json.dumps({"at": stamp}, default=str))      # quick and lazy
+\end{pycode}
+\begin{rawcode}
+{"at": "2026-01-05T09:30:00"}
+{"at": "2026-01-05 09:30:00"}
+\end{rawcode}
+
+Prefer ISO 8601 (\code{isoformat()}) for dates: it sorts correctly and every language
+reads it. By default \code{dumps} writes non-ASCII characters as \code{\textbackslash uXXXX}
+escapes; pass \code{ensure\_ascii=False} to keep readable text.
+
+\begin{gamerule}[: JSON for data, never pickle, across trust boundaries]
+JSON can only carry data, not code. Use it for configs, API payloads and caches.
+\end{gamerule}
+
+\subsection{YAML}
+
+YAML is like JSON but uses indentation and allows comments and more types (dates). It is
+very common in config files (Docker Compose, CI, Kubernetes). The reader is third party:
+\code{pip install pyyaml}. This was syntax-checked only.
+
+\begin{pycode}
+# needs: pip install pyyaml
+import yaml
+
+text = """
+model: m-small
+params:
+  temperature: 0.2
+  stops: [END, STOP]
+debug: false
+"""
+conf = yaml.safe_load(text)            # dict; false -> False
+print(conf["params"]["stops"])         # ['END', 'STOP']
+\end{pycode}
+
+\begin{trap}[: \code{yaml.load} on untrusted text can run code]
+Always call \code{yaml.safe\_load}. Plain \code{load} can build arbitrary Python objects.
+\end{trap}
+
+\subsection{TOML}
+
+TOML is a clear config format with comments, in the standard library since Python 3.11
+(\code{tomllib}, read-only). \code{pyproject.toml} uses it.
+
+\begin{pycode}
+import tomllib
+
+toml_text = """
+title = "eval config"
+[model]
+name = "m-small"
+temperature = 0.2
+stops = ["END", "STOP"]
+[limits]
+max_tokens = 512
+"""
+conf = tomllib.loads(toml_text)         # loads takes a str
+print(conf)
+print(conf["limits"]["max_tokens"] + 1)
+
+# not run: from a file, open in BINARY mode
+# with open("pyproject.toml", "rb") as f:
+#     conf = tomllib.load(f)
+\end{pycode}
+\begin{rawcode}
+{'title': 'eval config', 'model': {'name': 'm-small', 'temperature': 0.2, 'stops': ['END', 'STOP']}, 'limits': {'max_tokens': 512}}
+513
+\end{rawcode}
+
+\begin{typecheck}
+TOML keeps types: strings, \code{int}, \code{float}, \code{bool}, lists, dates, tables
+(nested \code{dict}). \code{tomllib.load} needs a file opened with \code{"rb"};
+\code{tomllib.loads} takes a \code{str}. It cannot write TOML.
+\end{typecheck}
+
+\subsection{Tablib}
+
+Tablib (\code{pip install tablib}) imports, edits and exports tabular data between CSV,
+JSON, YAML, Excel and DataFrames. In Chapter 25 pandas does the same job and more.
+
+\subsection{Configuration files}
+
+Do not invent your own config format. You would have to maintain both writer and parser.
+Use one of the formats above. The standard \code{configparser} reads Windows-style
+\code{.ini} files with sections:
+
+\begin{pycode}
+import configparser
+
+ini = """[api]
+base = https://example.test
+timeout = 30
+[paths]
+home = /srv/app
+logs = %(home)s/logs
+"""
+cp = configparser.ConfigParser()
+cp.read_string(ini)                     # cp.read("file.ini") for a file
+print(cp["api"]["timeout"], type(cp["api"]["timeout"]))
+print(cp["api"].getint("timeout") + 1)
+print(cp["paths"]["logs"])              # %(home)s was filled in
+\end{pycode}
+\begin{rawcode}
+30 <class 'str'>
+31
+/srv/app/logs
+\end{rawcode}
+
+\begin{typecheck}
+Every \code{configparser} value is a \code{str}. Use \code{getint}, \code{getfloat},
+\code{getboolean}. Only two levels (section, key); for deeper nesting use JSON, YAML or
+TOML.
+\end{typecheck}
+
+\begin{gamerule}[: secrets do not go in config files you commit]
+Keep API keys in environment variables or a secrets manager, not in \code{.json},
+\code{.toml} or \code{.ini} files in git.
+\end{gamerule}
+
+% ------------------------------------------------------------
+\section{Binary Files}
+
+Some formats are neither relational nor NoSQL; they store a particular shape of data in
+bytes.
+
+\subsection{Padded binary files and memory mapping}
+
+Like the padded text file, but with fixed-size binary records. The \code{struct} module
+packs values into bytes with a format string; \code{mmap} makes a file look like one big
+\code{bytes}-like object so you can slice it without reading everything.
+
+\begin{pycode}
+import mmap
+import struct
+
+rec = struct.Struct("<8sIf")            # 8-byte name, uint32, float32
+print(rec.size)
+with open("fixed.bin", "wb") as f:
+    records = [(b"alpha", 1, 0.5), (b"beta", 2, 1.5), (b"gamma", 3, 2.5)]
+    for name, n, x in records:
+        f.write(rec.pack(name, n, x))
+with open("fixed.bin", "rb") as f:
+    with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+        chunk = mm[rec.size:2 * rec.size]      # record 1, no full read
+        print(rec.unpack(chunk))
+\end{pycode}
+\begin{rawcode}
+16
+(b'beta\x00\x00\x00\x00', 2, 1.5)
+\end{rawcode}
+
+\begin{typecheck}
+Everything here is \code{bytes}. A fixed-width string field comes back padded with
+\code{b"\textbackslash x00"}; strip it and decode: \code{raw.rstrip(b"\textbackslash x00").decode("utf-8")}.
+\code{"<"} in the format means little-endian with no alignment padding.
+\end{typecheck}
+
+This is low-level work, used close to hardware or in file formats you must match. Chapter
+18 covers \code{struct} in depth.
+
+\subsection{Spreadsheets, HDF5 and TileDB}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+\textbf{Format} & \textbf{How to use it from Python} \\
+\midrule
+Excel (\code{.xlsx}) & export to CSV and use \code{csv}; or use a library
+(\code{openpyxl}, Tablib, pandas \code{read\_excel}) \\
+HDF5 & binary format for huge numeric arrays and hierarchies, fast random access; write once,
+read many. Packages \code{h5py} (low level), PyTables (database-like) \\
+TileDB & successor to HDF5 for dense or sparse arrays (\code{pip install tiledb}); science
+oriented \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+% ------------------------------------------------------------
+\section{Relational Databases}
+
+A relational database stores data in \emph{tables} and lets you combine tables. It gives
+you things files do not:
+
+\begin{itemize}[leftmargin=*,itemsep=1pt]
+\item many users at once, without corrupting the data;
+\item a \emph{schema}: columns with types and rules (\emph{constraints});
+\item fast lookups with \emph{indexes};
+\item \emph{joins}: combine tables by shared values;
+\item a declarative query language, SQL: you say \emph{what} you want, not how to get it.
+\end{itemize}
+
+\subsection{Tables, keys and indexes}
+
+%MD
+%```text
+% table runs
+% primary key: unique
+%        |
+%        v
+% +----+------+-------+
+% | id | task | score |   <- column: name and type
+% +----+------+-------+
+% |  1 | qa   | 0.71  |
+% |  2 | code | 0.55  |   <- row: one record
+% |  3 | qa   | NULL  |   <- NULL: value missing
+% +----+------+-------+
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[h/.style={draw=cgray,fill=cgray!15,minimum width=#1,minimum height=6mm,
+    font=\ttfamily\scriptsize\bfseries},
+  c/.style={draw=cgray,minimum width=#1,minimum height=6mm,font=\ttfamily\scriptsize},
+  lab/.style={font=\scriptsize\sffamily,text=cred},>=Stealth]
+  \node[font=\sffamily\bfseries\small] at (1.9,1.3) {table \code{runs}};
+  \node[h=1.0cm,fill=cgold!25] (h1) at (0,0.6) {id};
+  \node[h=1.6cm] (h2) at (1.3,0.6) {task};
+  \node[h=1.6cm] (h3) at (2.9,0.6) {score};
+  \foreach \y/\a/\b/\c in {0/1/qa/0.71, -0.6/2/code/0.55, -1.2/3/qa/NULL} {
+    \node[c=1.0cm] at (0,\y) {\a};
+    \node[c=1.6cm] at (1.3,\y) {\b};
+    \node[c=1.6cm] at (2.9,\y) (cell\a) {\c};
+  }
+  \node[lab,anchor=west] at (4.2,0.6) {column: name and type};
+  \draw[->,cred] (4.15,0.6) -- (3.75,0.6);
+  \node[lab,anchor=west] at (4.2,-0.6) {row: one record};
+  \draw[->,cred] (4.15,-0.6) -- (3.75,-0.6);
+  \node[lab,anchor=west] at (4.2,-1.2) {NULL: value missing};
+  \draw[->,cred] (4.15,-1.2) -- (3.75,-1.2);
+  \node[lab,anchor=east] at (-0.8,0.6) {primary key: unique};
+  \draw[->,cred] (-0.75,0.6) -- (-0.55,0.6);
+\end{tikzpicture}
+\end{center}
+
+\begin{itemize}[leftmargin=*,itemsep=1pt]
+\item \textbf{Primary key}: a column (or group) whose values are unique in the table.
+  It identifies a row and is indexed automatically.
+\item \textbf{Index}: a side structure, like a book index, that finds rows by a column
+  without scanning the whole table. Without one the database does a \emph{table scan}.
+\item \textbf{Foreign key}: a column holding another table's primary key. It links rows
+  across tables.
+\item \textbf{NULL}: ``no value''. It is not zero and not an empty string.
+\end{itemize}
+
+``Database'' is used for three things: the server program, a named container of tables,
+and the stored data. Say ``database server'', ``database'' and ``data'' when it matters.
+
+% ------------------------------------------------------------
+\section{SQL}
+
+SQL is a text language sent to the database, which decides how to run it. It is not
+case-sensitive, but keywords are written in capitals by tradition. Dialects differ slightly
+between vendors; the core below works on SQLite, PostgreSQL and MySQL.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+\textbf{Group} & \textbf{Statements} \\
+\midrule
+DDL (data definition) & \code{CREATE TABLE}, \code{DROP TABLE}, \code{ALTER TABLE},
+\code{CREATE INDEX}: shape of the data \\
+DML (data manipulation) & \code{INSERT}, \code{SELECT}, \code{UPDATE}, \code{DELETE}: the
+data itself. Known as CRUD: Create, Read, Update, Delete \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{rawcode}
+CREATE TABLE t (id INTEGER PRIMARY KEY, label TEXT NOT NULL);   -- DDL
+INSERT INTO t (label) VALUES ('first');                          -- create
+SELECT id, label FROM t WHERE id > 0;                            -- read
+UPDATE t SET label = 'one' WHERE id = 1;                         -- update
+DELETE FROM t WHERE id = 1;                                      -- delete
+DROP TABLE t;                                                    -- DDL
+\end{rawcode}
+
+\begin{trap}[: \code{UPDATE} or \code{DELETE} without \code{WHERE} hits every row]
+Write the \code{WHERE} first. Run it as a \code{SELECT} to see which rows it matches, then
+change \code{SELECT} to \code{DELETE}.
+\end{trap}
+
+\subsection{A small dataset}
+
+We use SQLite from the standard library (details in the next section). Two tables: models
+and their eval runs. \code{runs.model\_id} is a foreign key to \code{models.id}. The helper
+\code{q} runs a query and returns the rows.
+
+\begin{pycode}
+import sqlite3
+
+conn = sqlite3.connect(":memory:")       # lives in RAM; gone at exit
+conn.execute("""
+CREATE TABLE models (
+    id        INTEGER PRIMARY KEY,
+    name      TEXT NOT NULL UNIQUE,
+    vendor    TEXT NOT NULL,
+    usd_per_m REAL NOT NULL
+)""")
+conn.execute("""
+CREATE TABLE runs (
+    id       INTEGER PRIMARY KEY,
+    model_id INTEGER NOT NULL REFERENCES models(id),
+    task     TEXT NOT NULL,
+    score    REAL,
+    tokens   INTEGER NOT NULL
+)""")
+conn.executemany(
+    "INSERT INTO models (name, vendor, usd_per_m) VALUES (?, ?, ?)",
+    [("m-small", "acme", 0.10), ("m-big", "acme", 3.00),
+     ("m-open", "libre", 0.0)],
+)
+conn.executemany(
+    "INSERT INTO runs (model_id, task, score, tokens) VALUES (?, ?, ?, ?)",
+    [(1, "qa", 0.71, 1200), (1, "code", 0.55, 3000), (2, "qa", 0.90, 1100),
+     (2, "code", 0.84, 2900), (2, "qa", 0.88, 1000), (3, "qa", None, 800)],
+)
+conn.commit()
+
+def q(sql, params=()):
+    return conn.execute(sql, params).fetchall()
+
+print(q("SELECT * FROM models"))
+\end{pycode}
+\begin{rawcode}
+[(1, 'm-small', 'acme', 0.1), (2, 'm-big', 'acme', 3.0), (3, 'm-open', 'libre', 0.0)]
+\end{rawcode}
+
+Notice that the last run has \code{score = None}: it becomes SQL \code{NULL}.
+
+\subsection{SELECT, WHERE, ORDER BY, LIMIT}
+
+\code{SELECT} picks columns, \code{FROM} the table, \code{WHERE} filters rows,
+\code{ORDER BY} sorts (\code{DESC} for descending), \code{LIMIT} caps the count.
+
+\begin{pycode}
+print(q("SELECT task, score FROM runs WHERE score > 0.7 AND task = 'qa'"))
+print(q("""SELECT id, score FROM runs WHERE score IS NOT NULL
+           ORDER BY score DESC LIMIT 3"""))
+print(q("SELECT id FROM runs WHERE score = NULL"))    # wrong
+print(q("SELECT id FROM runs WHERE score IS NULL"))   # right
+\end{pycode}
+\begin{rawcode}
+[('qa', 0.71), ('qa', 0.9), ('qa', 0.88)]
+[(3, 0.9), (5, 0.88), (4, 0.84)]
+[]
+[(6,)]
+\end{rawcode}
+
+\begin{trap}[: \code{= NULL} never matches]
+\code{NULL} means ``unknown'', and nothing equals unknown. Use \code{IS NULL} and
+\code{IS NOT NULL}. Also note that \code{AVG} and \code{MAX} skip NULLs.
+\end{trap}
+
+Other filters: \code{IN ('a','b')}, \code{BETWEEN 1 AND 5}, \code{LIKE 'm-\%'} (\code{\%}
+means any text), \code{OR}, \code{NOT}.
+
+\subsection{Aggregates and GROUP BY}
+
+Aggregate functions collapse many rows into one value: \code{COUNT}, \code{SUM},
+\code{AVG}, \code{MIN}, \code{MAX}. \code{GROUP BY} makes one bucket per distinct value and
+runs the aggregate once per bucket. \code{HAVING} filters buckets (\code{WHERE} filters rows
+\emph{before} grouping).
+
+%MD
+%```mermaid
+%flowchart LR
+%    subgraph rows["rows of runs (model_id | score)"]
+%        r1["1 | 0.71"]
+%        r2["1 | 0.55"]
+%        r3["2 | 0.90"]
+%        r4["2 | 0.84"]
+%        r5["2 | 0.88"]
+%        r6["3 | NULL"]
+%    end
+%    subgraph buckets["buckets: GROUP BY model_id"]
+%        b1["0.71, 0.55"]
+%        b2["0.90, 0.84, 0.88"]
+%        b3["NULL"]
+%    end
+%    r1 --> b1
+%    r2 --> b1
+%    r3 --> b2
+%    r4 --> b2
+%    r5 --> b2
+%    r6 --> b3
+%    b1 --> o1["1 | n=2 | avg 0.63"]
+%    b2 --> o2["2 | n=3 | avg 0.873"]
+%    b3 --> o3["3 | n=1 | avg NULL"]
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[r/.style={draw=#1,fill=#1!15,minimum width=1.9cm,minimum height=5.5mm,
+    font=\ttfamily\scriptsize},>=Stealth]
+  \node[font=\scriptsize\sffamily] at (0.9,1.5) {rows of \code{runs}};
+  \foreach \i/\y/\col/\t in {1/0.9/cblue/{1 | 0.71}, 2/0.3/cblue/{1 | 0.55}, 3/-0.3/cgold/{2 | 0.90},
+                          4/-0.9/cgold/{2 | 0.84}, 5/-1.5/cgold/{2 | 0.88}, 6/-2.1/cgreen/{3 | NULL}}
+    \node[r=\col] (row\i) at (0.9,\y) {\t};
+  \node[font=\scriptsize\sffamily] at (5.0,1.5) {buckets (\code{GROUP BY model\_id})};
+  \draw[cblue,thick,rounded corners=2pt] (3.7,1.1) rectangle (6.3,-0.1);
+  \draw[cgold,thick,rounded corners=2pt] (3.7,-0.5) rectangle (6.3,-1.8);
+  \draw[cgreen,thick,rounded corners=2pt] (3.7,-1.9) rectangle (6.3,-2.5);
+  \node[font=\scriptsize\ttfamily] at (5.0,0.5) {0.71, 0.55};
+  \node[font=\scriptsize\ttfamily] at (5.0,-1.15) {0.90, 0.84, 0.88};
+  \node[font=\scriptsize\ttfamily] at (5.0,-2.2) {NULL};
+  \node[font=\scriptsize\sffamily] at (9.4,1.5) {one result row each};
+  \node[r=cblue,minimum width=3cm]  (o1) at (9.4,0.5)  {1 | n=2 | avg 0.63};
+  \node[r=cgold,minimum width=3cm]  (o2) at (9.4,-1.15) {2 | n=3 | avg 0.873};
+  \node[r=cgreen,minimum width=3cm] (o3) at (9.4,-2.2) {3 | n=1 | avg NULL};
+  \draw[->] (6.3,0.5) -- (o1.west);
+  \draw[->] (6.3,-1.15) -- (o2.west);
+  \draw[->] (6.3,-2.2) -- (o3.west);
+  \foreach \i in {1,2} \draw[->,cblue] (row\i.east) -- (3.7,0.5);
+  \foreach \i in {3,4,5} \draw[->,cgold] (row\i.east) -- (3.7,-1.15);
+  \draw[->,cgreen] (row6.east) -- (3.7,-2.2);
+\end{tikzpicture}
+\end{center}
+
+\begin{pycode}
+print(q("SELECT COUNT(*), AVG(score), MAX(tokens), SUM(tokens) FROM runs"))
+print(q("""SELECT model_id, COUNT(*) AS n, ROUND(AVG(score), 3) AS avg_score
+           FROM runs GROUP BY model_id ORDER BY model_id"""))
+print(q("""SELECT model_id, COUNT(*) AS n FROM runs
+           GROUP BY model_id HAVING COUNT(*) >= 2"""))
+\end{pycode}
+\begin{rawcode}
+[(6, 0.776, 3000, 10000)]
+[(1, 2, 0.63), (2, 3, 0.873), (3, 1, None)]
+[(1, 2), (2, 3)]
+\end{rawcode}
+
+\code{AS} gives a column an alias. \code{COUNT(*)} counts rows; \code{COUNT(score)} skips
+NULLs. Model 3 has an average of \code{None} because its only score is NULL.
+
+\subsection{JOIN}
+
+A join combines rows of two tables where the \code{ON} condition is true. Here: each run
+row is matched with the model row whose \code{id} equals the run's \code{model\_id}.
+
+%MD
+%```mermaid
+%erDiagram
+%    models ||--o{ runs : "ON m.id = r.model_id"
+%    models {
+%        int id PK
+%        text name
+%    }
+%    runs {
+%        int model_id FK
+%        real score
+%    }
+%```
+%
+%```text
+%result of the JOIN: name + score
+%+---------+-------+
+%| m-small | 0.71  |   <- run with model_id 1
+%| m-big   | 0.90  |   <- run with model_id 2
+%| m-big   | 0.88  |   <- run with model_id 2
+%| m-open  | NULL  |   <- run with model_id 3
+%+---------+-------+
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[c/.style={draw=cgray,minimum height=5.5mm,font=\ttfamily\scriptsize,
+    inner sep=2pt},>=Stealth]
+  \node[font=\scriptsize\sffamily\bfseries] at (1.5,1.2) {models};
+  \node[font=\scriptsize\sffamily,text=cgray] at (0.9,0.85) {name};
+  \node[font=\scriptsize\sffamily,text=cgray] at (2.15,0.85) {id};
+  \foreach \y/\i/\n/\col in {0.3/1/m-small/cblue, -0.3/2/m-big/cgold, -0.9/3/m-open/cgreen} {
+    \node[c,minimum width=1.5cm,fill=\col!20] at (0.9,\y) {\n};
+    \node[c,minimum width=0.8cm,fill=\col!20] (mi\i) at (2.15,\y) {\i};
+  }
+  \node[font=\scriptsize\sffamily\bfseries] at (7.9,1.2) {runs};
+  \node[font=\scriptsize\sffamily,text=cgray] at (7.2,0.85) {model\_id};
+  \node[font=\scriptsize\sffamily,text=cgray] at (8.5,0.85) {score};
+  \foreach \y/\i/\m/\s/\col in {0.3/1/1/0.71/cblue, -0.3/2/2/0.90/cgold,
+                                -0.9/3/2/0.88/cgold, -1.5/4/3/NULL/cgreen} {
+    \node[c,minimum width=1.3cm,fill=\col!20] (rm\i) at (7.2,\y) {\m};
+    \node[c,minimum width=1.2cm,fill=\col!5] at (8.5,\y) {\s};
+  }
+  \draw[->,cblue,thick]  (rm1.west) to[out=180,in=0] (mi1.east);
+  \draw[->,cgold,thick]  (rm2.west) to[out=180,in=0] (mi2.east);
+  \draw[->,cgold,thick]  (rm3.west) to[out=180,in=0] (mi2.east);
+  \draw[->,cgreen,thick] (rm4.west) to[out=180,in=0] (mi3.east);
+  \node[font=\scriptsize\sffamily,text=cgray,fill=white,inner sep=1pt] at (4.7,0.9) {\code{ON m.id = r.model\_id}};
+  \node[font=\scriptsize\sffamily\bfseries] at (4.5,-2.3) {result of the JOIN: name + score};
+  \foreach \y/\n/\s/\col in {-2.8/m-small/0.71/cblue, -3.4/m-big/0.90/cgold,
+                             -4.0/m-big/0.88/cgold, -4.6/m-open/NULL/cgreen} {
+    \node[c,minimum width=1.6cm,fill=\col!20] at (3.7,\y) {\n};
+    \node[c,minimum width=1.2cm,fill=\col!20] at (5.3,\y) {\s};
+  }
+\end{tikzpicture}
+\end{center}
+
+\begin{pycode}
+print(q("""SELECT m.name, r.task, r.score
+           FROM runs AS r JOIN models AS m ON m.id = r.model_id
+           WHERE r.task = 'qa' ORDER BY r.score DESC"""))
+for row in q("""SELECT m.name, SUM(r.tokens) AS toks,
+                       SUM(r.tokens) * m.usd_per_m / 1000000.0 AS usd
+                FROM models m JOIN runs r ON r.model_id = m.id
+                GROUP BY m.id ORDER BY usd DESC"""):
+    print(row)
+\end{pycode}
+\begin{rawcode}
+[('m-big', 'qa', 0.9), ('m-big', 'qa', 0.88), ('m-small', 'qa', 0.71),
+ ('m-open', 'qa', None)]
+('m-big', 5000, 0.015)
+('m-small', 4200, 0.00042)
+('m-open', 800, 0.0)
+\end{rawcode}
+
+The second query is the shape you will use daily: join, group by, aggregate. It computes
+cost per model from token counts and a price per million tokens.
+
+\code{JOIN} (inner join) drops rows with no partner. \code{LEFT JOIN} keeps every row of
+the left table and fills missing right-side columns with NULL:
+
+\begin{pycode}
+conn.execute("INSERT INTO models (name, vendor, usd_per_m) "
+             "VALUES ('m-new', 'acme', 1.0)")
+print(q("""SELECT m.name, COUNT(r.id) FROM models m
+           LEFT JOIN runs r ON r.model_id = m.id GROUP BY m.id"""))
+print(q("""SELECT m.name, COUNT(r.id) FROM models m
+           JOIN runs r ON r.model_id = m.id GROUP BY m.id"""))
+\end{pycode}
+\begin{rawcode}
+[('m-small', 2), ('m-big', 3), ('m-open', 1), ('m-new', 0)]
+[('m-small', 2), ('m-big', 3), ('m-open', 1)]
+\end{rawcode}
+
+\code{m-new} has no runs. The \code{LEFT JOIN} still lists it, with count 0; the inner
+\code{JOIN} loses it.
+
+\subsection{The order SQL really runs}
+
+You write \code{SELECT} first, but the database starts at \code{FROM}. This explains most
+``why can't I use that here?'' errors, for instance why an alias from \code{SELECT} cannot
+be used in \code{WHERE}.
+
+%MD
+%```mermaid
+%flowchart LR
+%    A["FROM / JOIN"] --> B["WHERE"] --> C["GROUP BY"] --> D["HAVING"] --> E["SELECT"] --> F["ORDER BY"] --> G["LIMIT"]
+%```
+%Pick tables, filter rows, make buckets, filter buckets, choose columns, sort, cut.
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[s/.style={nb,minimum width=2.1cm,font=\scriptsize\ttfamily},>=Stealth]
+  \foreach \i/\x/\t/\col in {1/0/{FROM / JOIN}/cblue, 2/2.45/WHERE/cblue, 3/4.9/{GROUP BY}/cgold,
+        4/7.35/HAVING/cgold, 5/9.8/SELECT/cgreen, 6/12.25/{ORDER BY}/cpurple, 7/14.7/LIMIT/cpurple}
+    \node[s,draw=\col,fill=\col!12] (n\i) at (\x,0) {\t};
+  \foreach \a/\b in {1/2,2/3,3/4,4/5,5/6,6/7}
+    \draw[->] (n\a) -- (n\b);
+  \node[font=\scriptsize\sffamily,text=cgray] at (7.35,-0.8)
+    {pick tables, filter rows, make buckets, filter buckets, choose columns, sort, cut};
+\end{tikzpicture}
+\end{center}
+
+\subsection{UPDATE, DELETE and indexes}
+
+\begin{pycode}
+cur = conn.execute("UPDATE runs SET score = 0.5 WHERE score IS NULL")
+print(cur.rowcount)                      # rows changed
+cur = conn.execute("DELETE FROM runs WHERE score < 0.6")
+print(cur.rowcount)                      # rows removed
+conn.commit()
+\end{pycode}
+\begin{rawcode}
+1
+2
+\end{rawcode}
+
+An index speeds up lookups and joins on a column but slows writes slightly and uses
+space. Index columns you filter or join on often (foreign keys are good candidates):
+
+\begin{rawcode}
+CREATE INDEX idx_runs_model ON runs (model_id);
+\end{rawcode}
+
+% ------------------------------------------------------------
+\section{DB-API and SQLite}
+
+\emph{DB-API} is Python's standard interface to relational databases. Drivers for SQLite,
+PostgreSQL and MySQL all follow it, so the shape of your code stays the same.
+
+%MD
+%```mermaid
+%flowchart LR
+%    A["connect()"] --> B["cursor()"] --> C["execute()"] --> D["fetch*()"] --> E["commit()"] --> F["close()"]
+%```
+%The connection is the line to the database; the cursor holds one query and its results.
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[s/.style={nb,minimum width=2.15cm,font=\scriptsize\ttfamily},>=Stealth]
+  \foreach \i/\x/\t/\col in {1/0/{connect()}/cblue, 2/2.7/{cursor()}/cblue, 3/5.4/{execute()}/cgreen,
+        4/8.1/{fetch*()}/cgreen, 5/10.8/{commit()}/cgold, 6/13.5/{close()}/cgray}
+    \node[s,draw=\col,fill=\col!12] (n\i) at (\x,0) {\t};
+  \foreach \a/\b in {1/2,2/3,3/4,4/5,5/6}
+    \draw[->] (n\a) -- (n\b);
+  \node[font=\scriptsize\sffamily,text=cgray,align=center] at (6.75,-0.9)
+    {connection = the line to the database \quad cursor = holds one query and its results};
+\end{tikzpicture}
+\end{center}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+\textbf{Call} & \textbf{What it does} \\
+\midrule
+\code{connect(...)} & open a connection (file name for SQLite; host, user, password for servers) \\
+\code{conn.cursor()} & create a cursor, the object that runs statements and holds results \\
+\code{execute(sql, params)} / \code{executemany(sql, seq)} & run one statement / run it once per parameter set \\
+\code{fetchone()}, \code{fetchmany(n)}, \code{fetchall()} & read result rows \\
+\code{conn.commit()} / \code{conn.rollback()} & make changes permanent / undo them \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+SQLite is a SQL database in a library: no server, one ordinary file, built into Python
+(\code{import sqlite3}). Browsers and phones use it. \code{":memory:"} gives a temporary
+database in RAM, ideal for tests.
+
+\subsection{Placeholders and what comes back}
+
+\begin{pycode}
+import sqlite3
+
+conn = sqlite3.connect(":memory:")
+conn.execute("CREATE TABLE users (name TEXT, plan TEXT)")
+conn.executemany("INSERT INTO users VALUES (?, ?)",
+                 [("ana", "free"), ("bo", "pro"), ("cy", "pro")])
+
+name = "nobody' OR '1'='1"                 # hostile input
+
+bad = f"SELECT name FROM users WHERE name = '{name}'"
+print(bad)
+print(conn.execute(bad).fetchall())        # leaks every row
+
+good = "SELECT name FROM users WHERE name = ?"
+print(conn.execute(good, (name,)).fetchall())
+
+print(conn.execute("SELECT name FROM users WHERE plan = :p AND name > :n",
+                   {"p": "pro", "n": "bo"}).fetchall())
+\end{pycode}
+\begin{rawcode}
+SELECT name FROM users WHERE name = 'nobody' OR '1'='1'
+[('ana',), ('bo',), ('cy',)]
+[]
+[('cy',)]
+\end{rawcode}
+
+\begin{trap}[: SQL injection]
+Building SQL with f-strings, \code{\%} or \code{+} lets user input become SQL. The
+hostile text above turned a one-row lookup into ``return everyone''. With \code{?}
+placeholders the driver sends the values separately and they are always treated as data.
+\textbf{Always pass values as parameters}, including for LLM-generated text.
+\end{trap}
+
+\begin{typecheck}
+Parameters must be a \emph{sequence}: \code{("pro",)} with the trailing comma, not
+\code{"pro"}. A bare string is treated as a sequence of characters.
+Placeholders can stand for \emph{values only}, not table or column names: \code{"SELECT *
+FROM ?"} is a syntax error. If a table name must vary, check it against a fixed allow-list.
+SQLite uses \code{?} and \code{:name}; psycopg2 (PostgreSQL) uses \code{\%s}.
+\end{typecheck}
+
+\begin{pycode}
+try:
+    conn.execute("SELECT name FROM users WHERE plan = ?",
+                 "pro")                       # not a tuple
+except sqlite3.ProgrammingError as err:
+    print("ProgrammingError:", err)
+sql = "SELECT name FROM users WHERE plan = ?"
+print(conn.execute(sql, ("pro",)).fetchall())
+try:
+    conn.execute("SELECT * FROM ?", ("users",))
+except sqlite3.OperationalError as err:
+    print("OperationalError:", err)
+\end{pycode}
+\begin{rawcode}
+ProgrammingError: Incorrect number of bindings supplied. The current statement uses 1, and there are 3 supplied.
+[('bo',), ('cy',)]
+OperationalError: near "?": syntax error
+\end{rawcode}
+
+Now the row type. \code{fetch*} returns \emph{tuples}; \code{fetchall} returns a list of
+tuples. Column names are in \code{cursor.description}. Set
+\code{conn.row\_factory = sqlite3.Row} to also read columns by name.
+
+\begin{pycode}
+cur = conn.execute("SELECT name, plan FROM users ORDER BY name")
+row = cur.fetchone()
+print(type(row), row, row[0])
+print([d[0] for d in cur.description])
+print(cur.fetchmany(1), cur.fetchall(), cur.fetchone())
+
+conn.row_factory = sqlite3.Row
+sql = "SELECT name, plan FROM users WHERE name = 'bo'"
+row = conn.execute(sql).fetchone()
+print(type(row).__name__, row["plan"], row[0], row.keys(), tuple(row))
+\end{pycode}
+\begin{rawcode}
+<class 'tuple'> ('ana', 'free') ana
+['name', 'plan']
+[('bo', 'pro')] [('cy', 'pro')] None
+Row pro bo ['name', 'plan'] ('bo', 'pro')
+\end{rawcode}
+
+\begin{typecheck}
+A cursor is used up as you read it: \code{fetchone} returns the next row or \code{None} when
+there are no more rows; \code{fetchall} then returns \code{[]}. SQL \code{NULL} becomes
+\code{None}. SQLite types are loose: it \emph{coerces} values to the column type when it
+can and stores the rest as is.
+\end{typecheck}
+
+\begin{pycode}
+conn.row_factory = None
+conn.execute("CREATE TABLE t (a INTEGER, b TEXT)")
+conn.execute("INSERT INTO t VALUES (1, 'x')")
+conn.execute("INSERT INTO t VALUES ('7', 5)")        # coerced, not rejected
+print(conn.execute("SELECT a, b, typeof(a), typeof(b) FROM t").fetchall())
+
+conn.execute("CREATE TABLE k (name TEXT UNIQUE)")
+conn.execute("INSERT INTO k VALUES ('a')")
+try:
+    conn.execute("INSERT INTO k VALUES ('a')")
+except sqlite3.IntegrityError as err:
+    print("IntegrityError:", err)
+\end{pycode}
+\begin{rawcode}
+[(1, 'x', 'integer', 'text'), (7, '5', 'integer', 'text')]
+IntegrityError: UNIQUE constraint failed: k.name
+\end{rawcode}
+
+Constraints (\code{UNIQUE}, \code{NOT NULL}, \code{PRIMARY KEY}, foreign keys) make the
+database reject bad data. That is what the schema is for.
+
+\subsection{Transactions: commit or lose it}
+
+Changes happen inside a \emph{transaction}. Other connections do not see them until you
+\code{commit()}. \code{rollback()} throws them away.
+
+%MD
+%```mermaid
+%sequenceDiagram
+%    participant A as connection A
+%    participant B as connection B
+%    A->>A: INSERT (pending)
+%    B->>B: COUNT(*) = 0
+%    A->>A: commit()
+%    A-->>B: change becomes visible
+%    B->>B: COUNT(*) = 1
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[>=Stealth]
+  \node[font=\sffamily\bfseries\small,text=cblue] at (0,0.3) {connection A};
+  \node[font=\sffamily\bfseries\small,text=cgreen] at (8,0.3) {connection B};
+  \draw[cgray] (0,0) -- (0,-4.2); \draw[cgray] (8,0) -- (8,-4.2);
+  \node[draw=cblue,fill=cblue!10,font=\scriptsize\ttfamily,inner sep=3pt] at (0,-0.8) {INSERT (pending)};
+  \node[draw=cgreen,fill=cgreen!10,font=\scriptsize\ttfamily,inner sep=3pt] at (8,-1.5) {COUNT(*) = 0};
+  \node[draw=cgold,fill=cgold!15,font=\scriptsize\ttfamily,inner sep=3pt] at (0,-2.4) {commit()};
+  \node[draw=cgreen,fill=cgreen!10,font=\scriptsize\ttfamily,inner sep=3pt] at (8,-3.4) {COUNT(*) = 1};
+  \draw[->,cgray,dashed] (0.1,-3.0) -- (7.9,-3.0);
+\end{tikzpicture}
+\end{center}
+
+\begin{pycode}
+import os
+import sqlite3
+import tempfile
+
+d = tempfile.mkdtemp()
+path = os.path.join(d, "app.db")
+
+a = sqlite3.connect(path)
+a.execute("CREATE TABLE ev (id INTEGER PRIMARY KEY, msg TEXT)")
+a.commit()
+a.execute("INSERT INTO ev (msg) VALUES ('one')")
+b = sqlite3.connect(path)
+print("before commit:", b.execute("SELECT COUNT(*) FROM ev").fetchone())
+a.commit()
+print("after commit :", b.execute("SELECT COUNT(*) FROM ev").fetchone())
+
+a.execute("INSERT INTO ev (msg) VALUES ('two')")
+print("in_transaction:", a.in_transaction)
+a.rollback()
+print("after rollback:", a.execute("SELECT COUNT(*) FROM ev").fetchone())
+\end{pycode}
+\begin{rawcode}
+before commit: (0,)
+after commit : (1,)
+in_transaction: True
+after rollback: (1,)
+\end{rawcode}
+
+The connection is also a context manager: leaving the \code{with} block commits, or rolls
+back if an exception escaped. It does \emph{not} close the connection.
+
+\begin{pycode}
+try:
+    with a:
+        a.execute("INSERT INTO ev (msg) VALUES ('three')")
+        raise RuntimeError("boom")
+except RuntimeError:
+    pass
+print("after failed with:", a.execute("SELECT COUNT(*) FROM ev").fetchone())
+with a:
+    a.execute("INSERT INTO ev (msg) VALUES ('four')")
+print("after good with  :", a.execute("SELECT COUNT(*) FROM ev").fetchone())
+a.close()
+b.close()
+
+c = sqlite3.connect(path)                # a file keeps its data
+print([r[0] for r in c.execute("SELECT msg FROM ev ORDER BY id")])
+c.close()
+\end{pycode}
+\begin{rawcode}
+after failed with: (1,)
+after good with  : (2,)
+['one', 'four']
+\end{rawcode}
+
+\begin{trap}[: forgetting \code{commit()}]
+Close a connection without committing and your inserts silently vanish. Use
+\code{with conn:} around each unit of work. Also close connections (or use
+\code{contextlib.closing}); they hold files and locks.
+\end{trap}
+
+\begin{gamerule}[: one function, parameters, with-block]
+Wrap writes in \code{with conn:}, pass values as parameters, and use
+\code{executemany} for bulk inserts: it is much faster than a Python loop of single
+\code{execute} calls.
+\end{gamerule}
+
+% ------------------------------------------------------------
+\section{DuckDB, MySQL and PostgreSQL}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l >{\raggedright\arraybackslash}p{2.3cm} >{\raggedright\arraybackslash}p{4.6cm} >{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Database} & \textbf{Runs as} & \textbf{Python package} & \textbf{Notes} \\
+\midrule
+SQLite & library, one file & \code{sqlite3} (stdlib) & simple apps, tests, local caches \\
+DuckDB & library, in-process & \code{duckdb} & analytics (OLAP): fast scans and aggregates; queries CSV, JSON, Parquet files directly (Chapter 25) \\
+MySQL & server & \code{mysqlclient}, \code{PyMySQL}, \code{mysql-connector-python} & popular open source server \\
+PostgreSQL & server & \code{psycopg2} (or \code{psycopg}) & full-featured, strict, extensible; also does JSON and vectors \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Servers are used when many programs on different machines need the same data. The API is
+the same DB-API; only the connection arguments and the placeholder style change. None of
+this was run here (no servers, no packages); syntax-checked only.
+
+\begin{pycode}
+# needs: pip install duckdb psycopg2-binary  (and a running PostgreSQL)
+import duckdb
+import psycopg2
+
+conn = psycopg2.connect(host="localhost", dbname="evals", user="me",
+                        password="x")
+with conn, conn.cursor() as cur:               # commit on success
+    cur.execute("SELECT name FROM models WHERE vendor = %s", ("acme",))
+    print(cur.fetchall())                      # %s, not ?, in psycopg2
+conn.close()
+
+print(duckdb.sql("SELECT avg(score) FROM 'runs.csv'").fetchall())
+\end{pycode}
+
+\code{psycopg2} needs the PostgreSQL client libraries unless you install the
+\code{-binary} variant. Get the password from an environment variable, never from code.
+
+% ------------------------------------------------------------
+\section{SQLAlchemy}
+
+SQL dialects differ, and DB-API only goes so far. \emph{SQLAlchemy} is the most popular
+cross-database toolkit. It has three levels; use the lowest that does the job.
+
+%MD
+%```mermaid
+%flowchart TB
+%    ORM["ORM: classes and sessions; rows become objects"]
+%    EXPR["SQL Expression Language: build queries in Python"]
+%    ENG["Engine: connection pool, dialect, raw SQL"]
+%    DRV["DB-API driver (sqlite3, psycopg2, ...)"]
+%    DB[("the database")]
+%    ORM --> EXPR --> ENG --> DRV --> DB
+%```
+%Going up the stack: more abstract, less SQL visible.
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[l/.style={draw,minimum width=8.5cm,minimum height=8mm,font=\small\sffamily,
+    align=center},>=Stealth]
+  \node[l,draw=cpurple,fill=cpurple!10] (a) at (0,3.0) {\textbf{ORM}: classes and sessions; rows become objects};
+  \node[l,draw=cblue,fill=cblue!10]   (b) at (0,2.0) {\textbf{SQL Expression Language}: build queries in Python};
+  \node[l,draw=cgreen,fill=cgreen!10] (c) at (0,1.0) {\textbf{Engine}: connection pool, dialect, raw SQL};
+  \node[l,draw=cgray,fill=cgray!10]   (d) at (0,0.0) {DB-API driver (sqlite3, psycopg2, ...)};
+  \node[l,draw=cgold,fill=cgold!15]   (e) at (0,-1.0) {the database};
+  \draw[<-,thick,cgray] (5.2,3.4) -- node[right,font=\scriptsize\sffamily,align=left]
+    {more abstract\\less SQL visible} (5.2,0.2);
+\end{tikzpicture}
+\end{center}
+
+The connection string (URL) selects the dialect and driver:
+
+\begin{rawcode}
+dialect+driver://user:password@host:port/dbname
+sqlite:///:memory:                    in-memory SQLite
+sqlite:///zoo.db                      file in the current folder
+postgresql+psycopg2://me:pw@localhost:5432/evals
+\end{rawcode}
+
+Below is the current (2.x) style for all three levels. It needs
+\code{pip install sqlalchemy}; not run here, syntax-checked only. Older tutorials that call
+\code{conn.execute("raw string")} do not work on 2.x: wrap raw SQL in \code{sa.text()}.
+
+\begin{pycode}
+# needs: pip install sqlalchemy  (2.x)
+import sqlalchemy as sa
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
+
+engine = sa.create_engine("sqlite:///:memory:")
+
+# level 1: engine + raw SQL, named parameters
+with engine.begin() as conn:                    # begin() commits at the end
+    conn.execute(sa.text(
+        "CREATE TABLE ev (id INTEGER PRIMARY KEY, msg TEXT)"))
+    conn.execute(sa.text("INSERT INTO ev (msg) VALUES (:m)"), {"m": "hi"})
+    rows = conn.execute(sa.text("SELECT id, msg FROM ev")).fetchall()
+    print(rows)                                 # [(1, 'hi')]
+
+\end{pycode}
+
+Level 2, the expression language, builds the same SQL from Python objects:
+
+\begin{pycode}
+# level 2: expression language
+meta = sa.MetaData()
+runs = sa.Table(
+    "runs", meta,
+    sa.Column("id", sa.Integer, primary_key=True),
+    sa.Column("task", sa.String),
+    sa.Column("score", sa.Float),
+)
+meta.create_all(engine)
+with engine.begin() as conn:
+    conn.execute(sa.insert(runs), [{"task": "qa", "score": 0.9}])
+    stmt = sa.select(runs.c.task, runs.c.score).where(runs.c.score > 0.5)
+    print(conn.execute(stmt).all())
+
+\end{pycode}
+
+Level 3, the ORM, maps a class to a table and a row to an instance:
+
+\begin{pycode}
+# level 3: ORM
+class Base(DeclarativeBase):
+    pass
+
+class Model(Base):
+    __tablename__ = "models"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str]
+    usd_per_m: Mapped[float]
+
+Base.metadata.create_all(engine)
+with Session(engine) as session:
+    session.add(Model(name="m-small", usd_per_m=0.10))
+    session.commit()
+    found = session.scalars(sa.select(Model).where(Model.usd_per_m < 1)).all()
+    print(found[0].name)
+\end{pycode}
+
+\begin{typecheck}
+Levels 1 and 2 return \code{Row} objects that behave like tuples.
+Level 3 returns \emph{instances of your class} (\code{Model}); attributes are typed through
+\code{Mapped[int]}, \code{Mapped[str]}, ...
+\end{typecheck}
+
+An ORM (object-relational mapper) lets you stay in Python objects. But it is an
+abstraction, and abstractions leak: when it misbehaves you must understand the SQL it
+generates. Learn SQL first, then use an ORM for simple, table-shaped apps. FastAPI projects
+often use SQLAlchemy or SQLModel.
+
+Lighter tools: \code{dataset} (``databases for lazy people'', built on SQLAlchemy) and
+\code{records} (``SQL for humans'': plain SQL strings, exports via Tablib).
+
+% ------------------------------------------------------------
+\section{NoSQL Data Stores}
+
+Not all data is a rectangle. NoSQL (``not only SQL'') stores trade the strict table model
+for flexibility or scale. The simplest kind is a \emph{key-value store}: a dictionary on
+disk or on a server.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+\textbf{Store} & \textbf{Lives} & \textbf{Notes} \\
+\midrule
+\code{dbm} & file, stdlib & dict-like; keys and values are bytes \\
+Memcached & server, RAM & pure cache; may forget data any time \\
+Redis / Valkey & server, RAM + optional disk & keys with rich values (list, hash, set, sorted set); expiry \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{The dbm family}
+
+\code{dbm} behaves like a dict saved on disk. Modes: \code{"r"} read, \code{"w"} write,
+\code{"c"} read/write and create. You cannot iterate over the object, but \code{keys()},
+\code{len()} and \code{get()} work.
+
+\begin{pycode}
+import dbm
+import os
+import tempfile
+
+path = os.path.join(tempfile.mkdtemp(), "defs")
+with dbm.open(path, "c") as db:
+    db["mustard"] = "yellow"           # str is encoded for you
+    db[b"ketchup"] = b"red"
+    print(len(db), db["mustard"], type(db["mustard"]))
+    print(db.get("none"), db.get("none", b"dflt"))
+with dbm.open(path, "r") as db:
+    print(db["mustard"].decode("utf-8"))
+    print(sorted(db.keys()))
+\end{pycode}
+\begin{rawcode}
+2 b'yellow' <class 'bytes'>
+None b'dflt'
+yellow
+[b'ketchup', b'mustard']
+\end{rawcode}
+
+\begin{typecheck}
+dbm returns \code{bytes}, even if you stored a \code{str}. Decode on the way out.
+\end{typecheck}
+
+\subsection{Memcached}
+
+A fast in-memory cache server, often placed in front of a database. Data can disappear at
+any time (it is a cache). Python drivers: \code{python-memcached}, \code{pymemcache}.
+Operations: set/get, increment/decrement, delete. Use it only for data you can recompute.
+
+\subsection{Redis}
+
+Redis is a \emph{data structure server}: keys map to strings, lists, hashes, sets or sorted
+sets. Data lives in memory, with optional saving to disk. Redis types map closely to
+Python types, so it makes a handy shared scratchpad between programs. Install
+\code{pip install redis} and run a Redis server on localhost. All code in this section is
+syntax-checked only; the comments show what you should see.
+
+%MD
+%```text
+%  string        list              hash               set              sorted set
+%+---------+  +--------------+  +--------------+  +--------------+  +----------------+
+%| "calls" |  | "queue"      |  | "run:7"      |  | "tags:a"     |  | "leaders"      |
+%|   ->    |  |   ->         |  |   ->         |  |   ->         |  |   ->           |
+%|  "11"   |  | [job-a,job-b]|  | model:m-small|  | {qa, code}   |  | m-small 0.71   |
+%|         |  | order kept   |  | score:0.91   |  | unique,      |  | m-big   0.90   |
+%|         |  | push/pop     |  |              |  | no order     |  | sorted by score|
+%+---------+  +--------------+  +--------------+  +--------------+  +----------------+
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[k/.style={draw=#1,fill=#1!10,rounded corners=2pt,font=\ttfamily\scriptsize,
+    align=left,inner sep=4pt,minimum width=2.9cm,text width=2.7cm,minimum height=2.1cm},
+    t/.style={font=\sffamily\scriptsize\bfseries,anchor=south}]
+  \node[k=cblue] (s) at (0,0) {"calls" \(\to\)\\ "11"};
+  \node[t] at (s.north) {string};
+  \node[k=cgreen] (l) at (3.2,0) {"queue" \(\to\)\\{} [job-a, job-b]\\order kept\\push/pop both ends};
+  \node[t] at (l.north) {list};
+  \node[k=cgold] (h) at (6.4,0) {"run:7" \(\to\)\\ model: m-small\\score: 0.91};
+  \node[t] at (h.north) {hash};
+  \node[k=cpurple] (st) at (9.6,0) {"tags:a" \(\to\)\\ \{qa, code\}\\unique, no order};
+  \node[t] at (st.north) {set};
+  \node[k=cred] (z) at (12.8,0) {"leaders" \(\to\)\\ m-small 0.71\\m-big 0.90\\sorted by score};
+  \node[t] at (z.north) {sorted set};
+\end{tikzpicture}
+\end{center}
+
+\begin{pycode}
+# needs: pip install redis, and a Redis (or Valkey) server on localhost
+import json
+import time
+
+import redis
+
+r = redis.Redis(decode_responses=True)          # str in, str out
+
+# strings and counters
+r.set("model:default", "m-small")
+print(r.get("model:default"))                   # 'm-small'
+r.set("calls", 0)
+r.incr("calls")
+r.incr("calls", 10)
+print(r.get("calls"))                           # '11'  (a str!)
+print(r.setnx("model:default", "other"))        # False: key exists
+
+# list (a queue)
+r.rpush("queue", "job-a", "job-b")
+print(r.lpop("queue"), r.llen("queue"))         # job-a 1
+
+# hash (one level of fields, all strings)
+r.hset("run:7", mapping={"model": "m-small", "score": "0.91"})
+print(r.hget("run:7", "score"), r.hgetall("run:7"))
+
+# set
+r.sadd("tags:a", "qa", "code")
+r.sadd("tags:b", "qa", "math")
+print(r.sinter("tags:a", "tags:b"))             # {'qa'}
+
+# sorted set (leaderboard)
+r.zadd("leaders", {"m-small": 0.71, "m-big": 0.90})
+print(r.zrange("leaders", 0, -1, withscores=True))
+print(r.zrevrange("leaders", 0, 0))             # ['m-big']
+
+# cache with expiry
+r.set("cache:abc123", json.dumps({"text": "hi"}), ex=60)
+print(r.ttl("cache:abc123"))                    # about 60
+time.sleep(61)
+print(r.get("cache:abc123"))                    # None
+\end{pycode}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+\textbf{Type} & \textbf{Commands (redis-py method names)} \\
+\midrule
+String & \code{set}, \code{get}, \code{setnx} (only if absent), \code{getset}, \code{mset}/\code{mget}, \code{incr}/\code{decr}, \code{incrbyfloat}, \code{delete} \\
+List & \code{lpush}/\code{rpush}, \code{lpop}/\code{rpop}, \code{lrange(k, 0, -1)}, \code{llen}, \code{ltrim}, blocking \code{brpop} \\
+Hash & \code{hset}, \code{hget}, \code{hmget}, \code{hgetall}, \code{hkeys}, \code{hvals}, \code{hlen} \\
+Set & \code{sadd}, \code{smembers}, \code{srem}, \code{sinter}, \code{sunion}, \code{sdiff}, \code{scard} \\
+Sorted set & \code{zadd(k, \{member: score\})}, \code{zrange}, \code{zrank}, \code{zscore}; use for leaderboards, time series (score = timestamp) \\
+Expiry & \code{expire(k, seconds)}, \code{ex=} option of \code{set}, \code{ttl}; after that the key is gone \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{typecheck}
+Without \code{decode\_responses=True}, redis-py returns \code{bytes}: \code{b'11'}. Numbers
+come back as text (strings) from \code{get} even if you stored \code{11}; \code{incr}
+returns an \code{int}. Hash fields and list items are strings only. For nested data, store
+\code{json.dumps(...)} as one string. \code{smembers} gives a \code{set}.
+\end{typecheck}
+
+Expiry makes Redis a good cache. A common AI use is caching model replies so the same
+request is not paid for twice. The flow (\emph{cache-aside}):
+
+%MD
+%```mermaid
+%flowchart LR
+%    A["request<br/>model + prompt"] --> B["key = hash of the request"] --> C["cache lookup<br/>GET key"]
+%    C -->|found| D["hit: return stored reply"]
+%    C -->|absent| E["miss: call the API"] --> F["SET key reply<br/>with expiry"]
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[s/.style={nb,minimum width=2.4cm,font=\scriptsize\sffamily},>=Stealth]
+  \node[s] (a) at (0,0) {request\\model + prompt};
+  \node[s,draw=cgold,fill=cgold!15] (b) at (3.4,0) {key = hash\\of the request};
+  \node[s,draw=cpurple,fill=cpurple!10] (c) at (6.8,0) {cache lookup\\\code{GET key}};
+  \node[s,draw=cgreen,fill=cgreen!10] (d) at (10.4,0.9) {hit: return\\stored reply};
+  \node[s,draw=cred,fill=cred!10] (e) at (10.4,-0.9) {miss: call the API};
+  \node[s,draw=cgold,fill=cgold!15] (f) at (13.8,-0.9) {\code{SET key reply}\\with expiry};
+  \draw[->] (a) -- (b);
+  \draw[->] (b) -- (c);
+  \draw[->] (c) -- node[above,font=\tiny]{found} (d);
+  \draw[->] (c) -- node[below,font=\tiny]{absent} (e);
+  \draw[->] (e) -- (f);
+\end{tikzpicture}
+\end{center}
+
+The same logic works with a plain dictionary, so it can be tried without a server:
+
+\begin{pycode}
+import hashlib
+import json
+import time
+
+cache = {}                                   # key -> (expires_at, value)
+calls = 0
+
+def cache_key(model, prompt):
+    raw = json.dumps([model, prompt]).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()[:12]
+
+def fake_llm(prompt):                        # stands in for a paid API call
+    global calls
+    calls += 1
+    return prompt.upper()
+
+def ask(model, prompt, ttl=60):
+    key = cache_key(model, prompt)
+    hit = cache.get(key)
+    if hit and hit[0] > time.time():         # found and not expired
+        return hit[1]
+    value = fake_llm(prompt)
+    cache[key] = (time.time() + ttl, value)
+    return value
+
+print(ask("m1", "hello"), ask("m1", "hello"), ask("m1", "other"))
+print("api calls:", calls, "cache size:", len(cache))
+print(cache_key("m1", "hello"))
+\end{pycode}
+\begin{rawcode}
+HELLO HELLO OTHER
+api calls: 2 cache size: 2
+f3a65b99fca4
+\end{rawcode}
+
+\begin{gamerule}[: cache keys must contain everything that changes the answer]
+Hash the model name, the prompt \emph{and} the sampling settings. Set an expiry so stale
+answers disappear. Never cache anything that must be fresh or private to one user.
+\end{gamerule}
+
+\subsection{Redis alternative: Valkey}
+
+In 2024 Redis moved to a non-open-source license. Valkey is an API-compatible open source
+fork maintained by Redis core developers. Install \code{pip install valkey}; the client API
+mirrors redis-py.
+
+\subsection{Other NoSQL families}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X >{\raggedright\arraybackslash}p{4.8cm}@{}}
+\toprule
+\textbf{Family} & \textbf{Shape of data / use} & \textbf{Examples (Python package)} \\
+\midrule
+Document & JSON-like records with varying fields, nested; the ODM is the ORM of this world & MongoDB (PyMongo), DynamoDB (boto3), CouchDB \\
+Time series & measurements stamped with time (metrics) & InfluxDB, Prometheus client, TimescaleDB (TigerData) \\
+Graph & nodes joined by edges (users who follow users) & Neo4j (\code{neo4j}), ArangoDB \\
+Wide-column / other & huge data over many machines & Cassandra, HBase \\
+Full-text search & index every word; find the poem about windmills & Elasticsearch, Solr, Whoosh, Lucene \\
+Vector & arrays of numbers (embeddings) for \emph{similarity} search, not exact match & Chroma, pgvector, others \\
+Geospatial & maps and locations & PostGIS, SpatiaLite, GeoPandas \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+PostgreSQL can imitate several of these: \code{jsonb} columns store and index JSON
+documents, arrays store lists in a cell, and the \code{pgvector} extension adds vector
+search, all while keeping transactions and foreign keys. For an AI engineer, vector
+databases are the important one here: they store embeddings and answer ``which stored
+texts are closest in meaning to this one''. That is the core of retrieval-augmented
+generation (RAG).
+
+\begin{boss}[: choosing storage]
+There is no best store; there is the one that matches the shape and the access pattern.
+Ask: \emph{How big? Who writes and reads, and how many at once? What must survive a crash?
+Do I query by many fields, or by one key?}
+\begin{center}
+\begin{tabular}{@{}l l@{}}
+\toprule
+\textbf{If you need} & \textbf{Start with} \\
+\midrule
+a small config, read at startup & TOML or JSON file \\
+a table to exchange or inspect & CSV \\
+queries, joins, one app, local & SQLite \\
+many writers or services & PostgreSQL \\
+a fast cache with expiry & Redis \\
+nearest-neighbour search on embeddings & a vector database or \code{pgvector} \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{boss}
+
+% ------------------------------------------------------------
+\section{Practice}
+
+\begin{practice}
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+\item Write a CSV file with a column whose values contain commas and quotes. Read it back
+  with \code{DictReader}. What type is a number column, and how do you convert it?
+\item Create a SQLite database file with a table \code{evals(model, task, score, usd)}.
+  Load rows from a CSV with \code{executemany}. Commit, reopen the file, and print the
+  three best scores.
+\item This query is unsafe: \code{conn.execute(f"DELETE FROM evals WHERE model = '\{m\}'")}.
+  Show an input that deletes everything. Rewrite it safely. Why can you not use a
+  placeholder for the table name?
+\item Using \code{models} and \code{runs} from this chapter, write one query that returns
+  total cost per \emph{vendor}, only for vendors with more than 3000 tokens in total.
+  Which clause filters the buckets?
+\item Give an example where \code{LEFT JOIN} and \code{JOIN} return different row counts.
+  Which rows are missing in the inner join?
+\item (Needs Redis or Valkey.) Cache replies with a 30-second expiry, store run details as a
+  hash, and show \code{ttl} counting down.
+\end{enumerate}
+\end{practice}
+
+\begin{achievement}{Persistent Data}
+You can now:
+\begin{itemize}[leftmargin=*,itemsep=1pt]
+\item read and write CSV, JSON, TOML and XML and say what types each preserves;
+\item create SQLite tables and run SELECT, WHERE, ORDER BY, GROUP BY and JOIN queries;
+\item use parameterized queries, commit and rollback, and explain SQL injection;
+\item tell the three SQLAlchemy levels apart and know why to learn SQL first;
+\item pick between a file, SQLite, PostgreSQL, Redis and a vector store for a job.
+\end{itemize}
+\end{achievement}

@@ -1,0 +1,460 @@
+\chapter{For and While}
+
+\textbf{What this chapter gives you:} the two ways Python repeats work. \code{while} repeats as long as a
+test stays true. \code{for} walks through the items of anything iterable. You will also use \code{range()}
+to count, \code{break} and \code{continue} to steer, and the odd-looking \code{else} on a loop. Almost every
+AI script is a loop over documents, messages, batches, or retries.
+
+%RELATED: 4, 6, 8, 9, 10
+
+% ------------------------------------------------------------
+\section{Repeat with while}
+
+\code{while condition:} runs its indented block, then checks the condition again, over and over. When the
+condition is false, Python skips to the line after the block. Something inside the block must eventually make
+the condition false, or the loop never ends.
+
+\begin{pycode}
+budget = 1000
+used = 0
+while used + 300 <= budget:
+    used += 300
+    print("sent a batch, used", used)
+print("stopped at", used)
+\end{pycode}
+\begin{rawcode}
+sent a batch, used 300
+sent a batch, used 600
+sent a batch, used 900
+stopped at 900
+\end{rawcode}
+
+Tracing the loop by hand, one row per check, is the best way to see what happens:
+
+\begin{center}
+\begin{tabularx}{0.9\linewidth}{@{}c c c X@{}}
+\toprule
+\textbf{check \#} & \textbf{\code{used}} & \code{used + 300 <= 1000} & \textbf{action} \\
+\midrule
+1 & 0   & \code{300 <= 1000} \cmark  & run body: \code{used} becomes 300 \\
+2 & 300 & \code{600 <= 1000} \cmark  & run body: \code{used} becomes 600 \\
+3 & 600 & \code{900 <= 1000} \cmark  & run body: \code{used} becomes 900 \\
+4 & 900 & \code{1200 <= 1000} \xmark & leave the loop \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{trap}[: forgetting to change the thing you test]
+If the body never changes \code{used}, the test is true forever and the program hangs. Stop it with
+\code{Ctrl+C}. When you write a \code{while}, point at the line that moves it toward the end.
+\end{trap}
+
+\subsection{Cancel with break}
+
+\code{break} leaves the loop immediately. The pattern \code{while True:} plus a \code{break} inside is the
+standard way to loop ``until something happens''. \code{input()} reads one line from the keyboard and
+\emph{always returns a string}.
+
+% norun: waits for keyboard input
+\begin{pycode}
+while True:
+    line = input("prompt> ")
+    if line == "q":
+        break
+    print(line.upper())
+\end{pycode}
+\begin{rawcode}
+prompt> hi
+HI
+prompt> q
+\end{rawcode}
+
+\subsection{Skip ahead with continue}
+
+\code{continue} abandons the rest of this pass and jumps back to the top for the next pass. It is handy
+for skipping items you do not want to process.
+
+\begin{pycode}
+lines = ["hello", "", "   ", "world"]
+for line in lines:
+    if not line.strip():
+        continue
+    print("got:", line)
+\end{pycode}
+\begin{rawcode}
+got: hello
+got: world
+\end{rawcode}
+
+\subsection{Check break use with else}
+
+A loop may have an \code{else} block. It runs only if the loop finished \emph{without} hitting \code{break}.
+Read it as ``no break happened'': the loop was searching, and \code{else} says it found nothing. It is
+indented to match the \code{while}, not the \code{if}.
+
+%MD<
+% ```mermaid
+% flowchart TD
+%     T{"condition true?<br/>(or: next item?)"} -- yes --> B["loop body"]
+%     B -- "end of body, or continue" --> T
+%     B -- "break" --> E["after the loop"]
+%     T -- "no: loop ended normally" --> X["else block"] --> E
+% ```
+%MD>
+\begin{center}
+\begin{tikzpicture}[blk/.style={draw=#1,fill=#1!10,rounded corners=2pt,font=\ttfamily\small,minimum width=30mm,minimum height=8mm,inner sep=3pt,align=center},
+  lab/.style={font=\sffamily\scriptsize,text=cgray,fill=white,inner sep=1pt},>=Stealth]
+  \node[blk=cblue]  (t) at (0,0)  {test / next item};
+  \node[blk=cgreen] (b) at (5,0)  {loop body};
+  \node[blk=cgold]  (x) at (0,-2.4) {\code{else} block};
+  \node[blk=cgray]  (e) at (5,-2.4) {after the loop};
+  \draw[->,thick] (t) -- node[lab]{yes} (b);
+  \draw[->,thick] (b.north) to[bend right=35] node[lab,above]{end of body, or \code{continue}} (t.north);
+  \draw[->,thick,cred] (b) -- node[lab]{\code{break}} (e);
+  \draw[->,thick] (t) -- node[lab]{no: ended normally} (x);
+  \draw[->,thick] (x) -- (e);
+  \node[font=\sffamily\scriptsize,text=cred,anchor=west] at (5.0,-1.2) {};
+  \node[lab,anchor=west,align=left,text=cgray] at (6.9,-1.2) {\code{break} skips\\ the \code{else}};
+\end{tikzpicture}
+\end{center}
+
+\begin{pycode}
+batch = [3, 5, 7]
+pos = 0
+while pos < len(batch):
+    if batch[pos] % 2 == 0:
+        print("found an even number at", pos)
+        break
+    pos += 1
+else:
+    print("no even number")
+\end{pycode}
+\begin{rawcode}
+no even number
+\end{rawcode}
+
+A realistic use is a retry loop: stop at the first success, and the \code{else} reports that every attempt
+failed.
+
+\begin{pycode}
+statuses = [429, 429, 200]     # pretend replies from an API
+attempts = 0
+while attempts < 3:
+    status = statuses[attempts]
+    attempts += 1
+    if status == 200:
+        print("ok after", attempts, "tries")
+        break
+else:
+    print("gave up")
+\end{pycode}
+\begin{rawcode}
+ok after 3 tries
+\end{rawcode}
+
+% ------------------------------------------------------------
+\section{Iterate with for and in}
+
+\code{for name in iterable:} takes the items of the iterable one at a time, binds each to \code{name}, and
+runs the block. You do not manage a counter or know the length in advance. An \emph{iterable} is anything
+you can step through: strings, lists, tuples, dicts, sets, ranges, files, and more.
+
+%MD<
+% ```text
+%   models = ["haiku", "sonnet", "opus"]
+%
+%      pass 1           pass 2           pass 3
+%   [ "haiku" ]      [ "sonnet" ]      [ "opus" ]
+%        \                |                /
+%         v               v               v
+%                  model  (a name that is
+%                          re-pointed each pass)
+% ```
+%MD>
+\begin{center}
+\begin{tikzpicture}[cell/.style={draw=cblue,fill=cblue!8,minimum width=20mm,minimum height=7mm,font=\ttfamily\small},
+  nm/.style={draw=cgold,fill=cgold!15,rounded corners=2pt,font=\ttfamily\small,inner sep=4pt},
+  lab/.style={font=\sffamily\scriptsize,text=cgray},>=Stealth]
+  \node[lab,anchor=east] at (-1.4,1.4) {\code{models}};
+  \node[cell] (a) at (0,1.4)   {"haiku"};
+  \node[cell] (b) at (2.4,1.4) {"sonnet"};
+  \node[cell] (c) at (4.8,1.4) {"opus"};
+  \node[nm] (m) at (2.4,0) {model};
+  \draw[->,thick,cgray] (a.south) -- node[lab,left]{pass 1} (m);
+  \draw[->,thick,cgray] (b.south) -- node[lab,right]{pass 2} (m);
+  \draw[->,thick,cgray] (c.south) -- node[lab,right]{pass 3} (m);
+  \node[lab,anchor=west,align=left] at (4.0,0) {the name \code{model} is moved\\to the next item each pass};
+\end{tikzpicture}
+\end{center}
+
+\begin{pycode}
+>>> for letter in "thud":
+...     print(letter)
+t
+h
+u
+d
+>>> for model in ["haiku", "sonnet"]:
+...     print(model.upper())
+HAIKU
+SONNET
+\end{pycode}
+
+\begin{typecheck}[: what \texttt{x} is in \texttt{for x in ...}]
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+\textbf{Iterable} & \textbf{\code{x} is a ...} & \textbf{Example} \\
+\midrule
+\code{str}            & \code{str} (one character) & \code{"ab"} gives \code{"a"}, \code{"b"} \\
+\code{list}, \code{tuple} & the item itself        & any type, even another list \\
+\code{dict}           & the \emph{key}             & use \code{.values()} or \code{.items()} for more (Chapter 9) \\
+\code{range(n)}       & \code{int}                 & \code{0} up to \code{n - 1} \\
+\code{bytes}          & \code{int}                 & one byte as a number (Chapter 5) \\
+\code{enumerate(seq)} & a \code{(index, item)} tuple & unpack it: \code{for i, item in ...} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{typecheck}
+
+\subsection{break, continue, else}
+
+All three work exactly as in a \code{while}. The \code{else} runs when the loop was not stopped by
+\code{break}, and also when the iterable was empty.
+
+\begin{pycode}
+for letter in "thud":
+    if letter == "x":
+        print("found an x")
+        break
+else:
+    print("no x in there")
+\end{pycode}
+\begin{rawcode}
+no x in there
+\end{rawcode}
+
+A plain flag variable does the same job and some people find it clearer. Choose whichever you can read
+at a glance six months later.
+
+\begin{boss}[: the \texttt{else} on a loop]
+\code{else} on a \code{for} or \code{while} does \emph{not} mean ``otherwise, if the loop condition was
+false''. It means ``the loop ran to its natural end without a \code{break}''. That includes the case where
+a \code{for} had nothing to iterate over.\\[2pt]
+\textbf{Strategy:} read it as \code{nobreak}. Use it only for search loops: \code{break} means ``found it'',
+\code{else} means ``not found''. If that reading feels forced, use a flag instead.
+\end{boss}
+
+\begin{pycode}
+for item in []:
+    print("never printed")
+    break
+else:
+    print("else ran: the list was empty")
+\end{pycode}
+\begin{rawcode}
+else ran: the list was empty
+\end{rawcode}
+
+\subsection{Counting with enumerate}
+
+If you need both the position and the item, do not count by hand and do not write
+\code{range(len(items))}. \code{enumerate()} hands you pairs.
+
+\begin{pycode}
+models = ["haiku", "sonnet", "opus"]
+for i, name in enumerate(models, start=1):
+    print(i, name)
+\end{pycode}
+\begin{rawcode}
+1 haiku
+2 sonnet
+3 opus
+\end{rawcode}
+
+\subsection{Nested loops}
+
+A loop inside a loop runs its whole inner cycle for every outer pass. \code{break} and \code{continue}
+only affect the \emph{innermost} loop they sit in.
+
+\begin{pycode}
+for i in range(3):
+    for j in range(3):
+        if j == 1:
+            break          # leaves only the inner loop
+        print(i, j)
+\end{pycode}
+\begin{rawcode}
+0 0
+1 0
+2 0
+\end{rawcode}
+
+\begin{trap}[: changing a list while looping over it]
+Removing items from the list you are iterating makes Python skip items, because the positions shift.
+Loop over a copy (\code{for n in nums[:]}) or build a new list instead (Chapter 8). The loop below should
+remove all the even numbers, but it leaves a 4 behind.
+\end{trap}
+
+\begin{pycode}
+nums = [2, 4, 6, 7]
+for n in nums:
+    if n % 2 == 0:
+        nums.remove(n)
+print(nums)
+\end{pycode}
+\begin{rawcode}
+[4, 7]
+\end{rawcode}
+
+\begin{trap}[: the loop variable lives on]
+After a \code{for}, the name keeps the last item. If the iterable was empty, the name was never set and
+using it raises \code{NameError}.
+\end{trap}
+
+% ------------------------------------------------------------
+\section{Generate number sequences with range()}
+
+\code{range(start, stop, step)} produces integers on demand without building a list. Only \code{stop} is
+required. \code{start} defaults to 0 and \code{step} defaults to 1. The stop value is \emph{never}
+included, the same rule as slices.
+
+%MD<
+% ```text
+%   range(2, 10, 3)   ->  2, 5, 8
+%
+%   0  1  2  3  4  5  6  7  8  9  10
+%         *        *        *      |
+%         2        5        8    stop (10 is excluded)
+% ```
+%MD>
+\begin{center}
+\begin{tikzpicture}[>=Stealth,font=\ttfamily\scriptsize]
+  \draw[->,cgray] (-0.3,0) -- (11.2,0);
+  \foreach \v in {0,...,10} {
+    \draw[cgray] (\v,-0.07) -- (\v,0.07);
+    \node[below=2pt,text=cgray] at (\v,-0.07) {\v};
+  }
+  \foreach \v in {2,5,8} {
+    \fill[cgreen] (\v,0) circle (0.13);
+    \draw[->,cgreen!70!black,thick] (\v,0.85) -- (\v,0.2);
+  }
+  \draw[->,cgreen!70!black,thick] (2,0.55) to[bend left=40] node[above,font=\sffamily\tiny]{+3} (5,0.55);
+  \draw[->,cgreen!70!black,thick] (5,0.55) to[bend left=40] node[above,font=\sffamily\tiny]{+3} (8,0.55);
+  \node[font=\sffamily\scriptsize,text=cgreen!60!black,above] at (2,0.85) {start};
+  \node[draw=cred,thick,circle,inner sep=2pt,text=cred] at (10,0) {};
+  \node[font=\sffamily\scriptsize,text=cred,above] at (10,0.3) {stop: excluded};
+\end{tikzpicture}
+\end{center}
+
+\begin{pycode}
+>>> list(range(3))
+[0, 1, 2]
+>>> list(range(2, 6))
+[2, 3, 4, 5]
+>>> list(range(0, 11, 2))
+[0, 2, 4, 6, 8, 10]
+>>> list(range(2, -1, -1))
+[2, 1, 0]
+>>> list(range(5, 2))
+[]
+\end{pycode}
+
+\begin{typecheck}[: range is its own type]
+\code{range(...)} returns a \code{range} object: an immutable, lazy sequence of ints. It is not a list, so
+it prints as \code{range(2, 10, 3)}; wrap it in \code{list()} to see the numbers. It supports \code{len()},
+indexing, and \code{in}, and a huge range uses almost no memory.
+\end{typecheck}
+
+\begin{pycode}
+>>> r = range(0, 10, 3)
+>>> r
+range(0, 10, 3)
+>>> len(r), r[2], 9 in r, 5 in r
+(4, 6, True, False)
+>>> len(range(10**12))
+1000000000000
+\end{pycode}
+
+\begin{trap}[: the stop value is not included]
+\code{range(1, 5)} gives 1, 2, 3, 4. To get 1 to 5 you need \code{range(1, 6)}. A going-down range
+needs a negative step, or it is silently empty: \code{range(5, 2)} is \code{[]}, but
+\code{range(5, 2, -1)} is \code{[5, 4, 3]}.
+\end{trap}
+
+% ------------------------------------------------------------
+\section{Other iterators}
+
+The thing a \code{for} loop really uses is an \emph{iterator}: an object that gives the next item each time
+it is asked and raises \code{StopIteration} when it runs out. \code{iter()} makes one from any iterable and
+\code{next()} asks for the next item. You rarely call them yourself, but knowing they exist explains two
+behaviours.
+
+\begin{pycode}
+>>> it = iter(["a", "b"])
+>>> next(it), next(it)
+('a', 'b')
+>>> next(it)
+Traceback (most recent call last):
+  ...
+StopIteration
+>>> next(it, "done")
+'done'
+\end{pycode}
+
+\begin{trap}[: an iterator is used up after one pass]
+A list can be looped over many times. An iterator (and things like streaming API replies, which behave
+like iterators) can be consumed only once. A second loop sees nothing.
+\end{trap}
+
+\begin{pycode}
+>>> stream = iter([1, 2])
+>>> list(stream), list(stream)
+([1, 2], [])
+\end{pycode}
+
+The walrus operator (Chapter 6) pairs well with \code{while}: read a piece, test it, and use it in one
+line. This loop stops at the first empty piece.
+
+\begin{pycode}
+chunks = iter(["ab", "cd", ""])
+while (chunk := next(chunks)) != "":
+    print("chunk:", chunk)
+\end{pycode}
+\begin{rawcode}
+chunk: ab
+chunk: cd
+\end{rawcode}
+
+Later chapters show iteration over files (Chapter 20), how to make your own iterable objects
+(Chapter 11), and the \code{itertools} module (Chapter 12).
+
+\begin{gamerule}
+Prefer \code{for} when you know what you are looping over, and \code{while} when you loop until a condition
+changes. If you catch yourself writing \code{i = 0 ... i += 1} to walk a list, switch to \code{for} or
+\code{enumerate}.
+\end{gamerule}
+
+\begin{practice}
+\begin{enumerate}
+\item Print the numbers 3, 2, 1, 0 using a \code{for} loop over a list, then using \code{range()}.
+\item Write a \code{while} loop with \code{number = 1} and \code{guess\_me = 7} that prints
+\code{"too low"} while \code{number} is smaller, prints \code{"found it!"} and stops when equal, and
+increments \code{number} each pass.
+\item What does \code{list(range(10, 0, -3))} give? Predict it first.
+\item Rewrite \code{for i in range(len(items)): print(i, items[i])} using \code{enumerate}.
+\item Explain in one sentence when the \code{else} block of a \code{for} loop runs.
+\item Why does the loop that removes even numbers from \code{[2, 4, 6, 7]} leave a 4 in the list?
+\end{enumerate}
+\end{practice}
+
+\begin{achievement}{Loop Master}
+You can now:
+\begin{itemize}
+\item write \code{while} loops that end, and stop runaway ones;
+\item steer loops with \code{break}, \code{continue}, and loop \code{else};
+\item choose the right form of \code{range()} and predict its numbers;
+\item iterate with \code{for}, \code{enumerate}, and nested loops without skipping items;
+\item explain why an iterator can be read only once.
+\end{itemize}
+\end{achievement}

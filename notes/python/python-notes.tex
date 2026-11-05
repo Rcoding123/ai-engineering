@@ -1,0 +1,58 @@
+% Python Notes: study notes on "Introducing Python" (3rd ed.), one chapter per book chapter.
+% Written in our own words with our own examples.
+%
+% Build (from notes/python):
+%   pdflatex -output-directory=build python-notes.tex   (run twice for the contents page)
+
+\documentclass[11pt,a4paper]{report}
+\input{preamble}
+
+\begin{document}
+
+\begin{titlepage}
+\centering
+\vspace*{30mm}
+{\sffamily\bfseries\fontsize{38}{42}\selectfont PYTHON}\\[3mm]
+{\Large\sffamily\color{cgray} Field Notes \,\textperiodcentered\, from \emph{Introducing Python}, 3rd ed.}\\[30mm]
+\begin{tabular}{@{}l l@{}}
+  \badge{cblue}{KEY IDEA} & the concept to remember \\[2pt]
+  \badge{cpink}{TYPE CHECK} & what type you have, and what you can do with it \\[2pt]
+  \badge{cteal}{RULE} & how to do it right \\[2pt]
+  \badge{cgold}{TRAP CARD} & a common mistake \\[2pt]
+  \badge{cred}{BOSS FIGHT} & the hardest idea in the chapter \\[2pt]
+  \badge{cpurple}{PRACTICE} & questions to check yourself \\
+\end{tabular}
+\vfill
+\end{titlepage}
+
+\tableofcontents
+
+\input{chapters/ch01}  % Introduction
+\input{chapters/ch02}  % Types and Variables
+\input{chapters/ch03}  % Numbers
+\input{chapters/ch04}  % Strings
+\input{chapters/ch05}  % Bytes and Bytearray
+\input{chapters/ch06}  % If and Match
+\input{chapters/ch07}  % For and While
+\input{chapters/ch08}  % Tuples and Lists
+\input{chapters/ch09}  % Dictionaries and Sets
+\input{chapters/ch10}  % Functions
+\input{chapters/ch11}  % Objects
+\input{chapters/ch12}  % Modules and Packages
+\input{chapters/ch13}  % Development Environment
+\input{chapters/ch14}  % Type Hints and Documentation
+\input{chapters/ch15}  % Testing
+\input{chapters/ch16}  % Debugging
+\input{chapters/ch17}  % Text Data
+\input{chapters/ch18}  % Binary Data
+\input{chapters/ch19}  % Dates and Times
+\input{chapters/ch20}  % Files
+\input{chapters/ch21}  % Data in Time: Concurrency
+\input{chapters/ch22}  % Data in Space: Networks
+\input{chapters/ch23}  % Data in a Box: Persistent Storage
+\input{chapters/ch24}  % The Web
+\input{chapters/ch25}  % Data Science
+\input{chapters/ch26}  % AI
+\input{chapters/ch27}  % Performance
+
+\end{document}

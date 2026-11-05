@@ -1,0 +1,722 @@
+% ============================================================
+%  Book chapter 17: Text Data
+% ============================================================
+\chapter{Text Data}
+
+\textbf{What this chapter gives you:} a clear picture of what a Python \code{str} really is
+(a sequence of Unicode code points), how text turns into bytes and back, and how to pull fields
+out of messy text with regular expressions. You will need both skills every time you read model
+output, log files, scraped pages or JSON from an API.
+
+% ------------------------------------------------------------
+\tikzset{c17cell/.style={draw=cgray,minimum width=5.2mm,minimum height=6.5mm,inner sep=0pt,
+    font=\ttfamily\small},
+  c17byte/.style={draw=cblue,fill=cblue!10,minimum width=11mm,minimum height=7mm,inner sep=1pt,
+    font=\ttfamily\small},
+  c17chr/.style={draw=cgreen,fill=cgreen!10,minimum width=11mm,minimum height=7mm,inner sep=1pt,
+    font=\ttfamily\small}}
+
+\section{Text Strings: Unicode}
+
+\subsection{Python Unicode strings}
+
+A Python 3 \code{str} is a sequence of \emph{code points}. A code point is just a number that
+Unicode assigns to one character. ASCII covers only 128 of them. Unicode covers more than
+150{,}000: accented letters, other alphabets, math symbols, emoji.
+You can write any character with an escape sequence, so your source file can stay plain ASCII.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+\textbf{Escape} & \textbf{Example} & \textbf{Meaning} \\
+\midrule
+\code{\textbackslash u} + 4 hex digits & \code{"\textbackslash u00e9"} & code point up to \code{FFFF} \\
+\code{\textbackslash U} + 8 hex digits & \code{"\textbackslash U0001f47b"} & any code point, pad with zeros \\
+\code{\textbackslash N\{name\}} & \code{"\textbackslash N\{SNOWMAN\}"} & the official Unicode name (any case) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+The \code{unicodedata} module converts between names and characters. The built-ins \code{ord()}
+and \code{chr()} convert between a character and its number.
+
+\begin{pycode}
+import unicodedata
+
+a = "caf\u00e9"
+b = "caf\N{LATIN SMALL LETTER E WITH ACUTE}"
+print(a == b, len(a))                       # same text, 4 characters
+print(unicodedata.name("\u00e9"))
+print(hex(ord("\u00e9")), ascii(chr(233)))
+print(unicodedata.lookup("snowman") == "\u2603")
+print(len("\U0001f47b"))                    # one emoji is one character
+\end{pycode}
+\begin{rawcode}
+True 4
+LATIN SMALL LETTER E WITH ACUTE
+0xe9 '\xe9'
+True
+1
+\end{rawcode}
+
+\begin{typecheck}
+\code{len(s)} counts \emph{code points}, not bytes and not what you see on screen. One emoji is
+length 1. A \code{str} has no encoding at all. It is only when you turn it into \code{bytes} that
+an encoding appears.
+\end{typecheck}
+
+\begin{trap}
+Your terminal or font may not be able to \emph{show} a character that Python holds correctly.
+A box or question mark on screen does not mean the string is broken. Use \code{ascii(s)} or
+\code{s.encode("unicode-escape")} to see what is really inside. On Windows, \code{print()} of
+non-ASCII text can even raise an error if the console uses an old code page.
+\end{trap}
+
+\subsection{UTF-8: encode and decode}
+
+Files, sockets and APIs carry \code{bytes}, not \code{str}. Two operations cross the border:
+
+\begin{center}
+\begin{tikzpicture}[box/.style={draw=#1,fill=#1!10,rounded corners=3pt,minimum width=26mm,
+    minimum height=9mm,font=\ttfamily\small},>=Stealth]
+  \node[box=cgreen] (s) at (0,0) {str};
+  \node[box=cblue]  (b) at (7,0) {bytes};
+  \draw[->,thick] (s.east) -- node[above,font=\ttfamily\footnotesize]{.encode("utf-8")} (b.west);
+  \draw[->,thick] ([yshift=-3mm]b.west) -- node[below,font=\ttfamily\footnotesize]{.decode("utf-8")} ([yshift=-3mm]s.east);
+\end{tikzpicture}
+\end{center}
+% MD-BEGIN
+% ```mermaid
+% flowchart LR
+%     S["str (code points)"] -- ".encode('utf-8')" --> B["bytes (0-255 values)"]
+%     B -- ".decode('utf-8')" --> S
+% ```
+% MD-END
+
+UTF-8 uses one to four bytes per character. ASCII characters take one byte, so plain English
+text looks the same in ASCII and UTF-8. Accented Latin letters take two, most other scripts
+three, emoji four. It is the default almost everywhere, so use it unless you are forced not to.
+
+The picture below shows what happens to \code{"caf\textbackslash u00e9"}: four characters become five bytes,
+because the last character needs two.
+
+\begin{center}
+\begin{tikzpicture}[>=Stealth]
+  \node[font=\sffamily\footnotesize,anchor=east] at (-0.5,1.8) {str: 4 characters};
+  \node[c17chr] (c1) at (0,1.8) {c};
+  \node[c17chr] (c2) at (1.3,1.8) {a};
+  \node[c17chr] (c3) at (2.6,1.8) {f};
+  \node[c17chr,minimum width=26mm] (c4) at (4.55,1.8) {\'e\ \ U+00E9};
+  \node[font=\sffamily\footnotesize,anchor=east] at (-0.5,0) {bytes: 5 values};
+  \node[c17byte] (b1) at (0,0) {63};
+  \node[c17byte] (b2) at (1.3,0) {61};
+  \node[c17byte] (b3) at (2.6,0) {66};
+  \node[c17byte] (b4) at (3.9,0) {c3};
+  \node[c17byte] (b5) at (5.2,0) {a9};
+  \foreach \i in {1,2,3} \draw[->,thick,cgray] (c\i.south) -- (b\i.north);
+  \draw[->,thick,cgray] (c4.south) -- (b4.north);
+  \draw[->,thick,cgray] (c4.south) -- (b5.north);
+  \node[font=\sffamily\scriptsize,text=cgray,anchor=west] at (6.9,1.8) {1 byte each for ASCII};
+  \node[font=\sffamily\scriptsize,text=cgray,anchor=west] at (6.9,0.9) {2 bytes for \'e};
+\end{tikzpicture}
+\end{center}
+% MD-BEGIN
+% ```text
+% str    :  c    a    f    é (U+00E9)
+%           |    |    |     |     \
+% bytes  : 63   61   66    c3     a9      (hex)   -> 4 characters, 5 bytes
+% ```
+% MD-END
+
+\begin{pycode}
+s = "na\u00efve \u2603"          # naive with a diaeresis, plus a snowman
+data = s.encode("utf-8")
+print(data, len(s), len(data))
+print(type(s), type(data))
+print(data.decode("utf-8") == s)
+\end{pycode}
+\begin{rawcode}
+b'na\xc3\xafve \xe2\x98\x83' 7 10
+<class 'str'> <class 'bytes'>
+True
+\end{rawcode}
+
+\subsubsection*{Encode: what if the character does not fit?}
+
+Encodings other than UTF-8 cannot hold every character. The default error handler is
+\code{"strict"}, which raises \code{UnicodeEncodeError}. The second argument of \code{encode()}
+picks another policy.
+
+\begin{pycode}
+for enc in ("ascii", "latin-1"):
+    try:
+        print(enc, s.encode(enc))
+    except UnicodeEncodeError as e:
+        print(enc, "failed:", e.reason)
+print(s.encode("ascii", "ignore"))
+print(s.encode("ascii", "replace"))
+print(s.encode("ascii", "backslashreplace"))
+print(s.encode("ascii", "xmlcharrefreplace"))
+\end{pycode}
+\begin{rawcode}
+ascii failed: ordinal not in range(128)
+latin-1 failed: ordinal not in range(256)
+b'nave '
+b'na?ve ?'
+b'na\\xefve \\u2603'
+b'na&#239;ve &#9731;'
+\end{rawcode}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+\textbf{Handler} & \textbf{What it does with a character that does not fit} \\
+\midrule
+\code{strict} & raise an error (default) \\
+\code{ignore} & drop it silently \\
+\code{replace} & write \code{?} \\
+\code{backslashreplace} & write a Python-style escape such as \code{\textbackslash u2603} \\
+\code{xmlcharrefreplace} & write an HTML/XML numeric entity such as \code{\&\#9731;} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsubsection*{Decode: the encoding is a guess you must get right}
+
+Bytes carry no label saying which encoding made them. You must know it from the source: a file
+header, an HTTP \code{Content-Type}, a spec. Decode with the wrong one and you get either an
+error or, worse, wrong text without any error.
+
+\begin{pycode}
+raw = "caf\u00e9".encode("utf-8")
+print(raw)
+print(ascii(raw.decode("latin-1")))     # no error, but wrong text
+try:
+    raw.decode("ascii")
+except UnicodeDecodeError as e:
+    print("ascii failed:", e.reason, "at", e.start)
+print(ascii(b"caf\xe9".decode("utf-8", errors="replace")))
+\end{pycode}
+\begin{rawcode}
+b'caf\xc3\xa9'
+'caf\xc3\xa9'
+ascii failed: ordinal not in range(128) at 3
+'caf\ufffd'
+\end{rawcode}
+
+The second line is the classic garbled text (called mojibake): two strange characters where one
+\code{\'e} should be. The last line shows the \code{"replace"} handler on decode: bad bytes become the
+replacement character \code{U+FFFD}.
+
+\begin{center}
+\begin{tikzpicture}[>=Stealth]
+  \node[c17byte] (b1) at (0,0.45) {c3};
+  \node[c17byte] (b2) at (1.2,0.45) {a9};
+  \node[font=\sffamily\footnotesize,anchor=east] at (-0.7,0.45) {same two bytes};
+  \node[c17chr,minimum width=14mm] (u) at (6,1.2) {\'e};
+  \node[c17chr,minimum width=20mm,draw=cred,fill=cred!10] (l) at (6,-0.3) {\~A\textcopyright};
+  \draw[->,thick,cgreen] (1.9,0.65) -- node[above,sloped,font=\ttfamily\scriptsize]{utf-8} (u.west);
+  \draw[->,thick,cred] (1.9,0.25) -- node[below,sloped,font=\ttfamily\scriptsize]{latin-1} (l.west);
+  \node[font=\sffamily\scriptsize,anchor=west,text=cgreen!60!black] at (7.2,1.2) {1 character: correct};
+  \node[font=\sffamily\scriptsize,anchor=west,text=cred] at (7.2,-0.3) {2 characters: mojibake};
+\end{tikzpicture}
+\end{center}
+% MD-BEGIN
+% ```mermaid
+% flowchart LR
+%     B["bytes c3 a9"] -- "decode utf-8" --> OK["1 character: e with acute (correct)"]
+%     B -- "decode latin-1" --> BAD["2 characters: A-tilde + copyright sign (mojibake)"]
+% ```
+% MD-END
+
+\begin{gamerule}[: UTF-8 everywhere]
+Decode bytes to \code{str} as soon as they enter your program. Work only with \code{str}
+inside. Encode to bytes as late as possible, when you write or send. Always name the encoding
+explicitly (\code{"utf-8"}) instead of trusting the platform default.
+\end{gamerule}
+
+\begin{trap}
+\code{errors="ignore"} and \code{errors="replace"} hide data loss. They are fine for a log
+viewer. They are dangerous in a data pipeline, because corrupted training or eval text goes in
+without any warning. Prefer \code{strict} and fix the cause.
+\end{trap}
+
+\begin{boss}[: the str/bytes border]
+Most Unicode bugs come from one mistake: not knowing whether a value is \code{str} or
+\code{bytes} at this point in the program. Keep a mental label on every variable.
+Bytes arrive from outside (\code{.decode} them), text goes out (\code{.encode} it). Never
+mix: \code{"a" + b"a"} raises \code{TypeError}, and \code{"a" == b"a"} is just \code{False},
+not an error. If you see \code{UnicodeDecodeError}, ask first: \emph{which encoding made these
+bytes?}
+\end{boss}
+
+\subsection{HTML entities}
+
+Web text often hides characters behind entities such as \code{\&eacute;}, \code{\&\#233;} or
+\code{\&\#xe9;}. The \code{html} module converts them both ways. This matters when you scrape
+pages or clean model output that was copied from a web page.
+
+\begin{pycode}
+import html
+
+print(ascii(html.unescape("&eacute; &#233; &#xe9; &amp; &lt;b&gt;")))
+print(html.escape('<a href="x">Q&A</a>'))
+print(ascii("caf\u00e9".encode("ascii", "xmlcharrefreplace").decode()))
+\end{pycode}
+\begin{rawcode}
+'\xe9 \xe9 \xe9 & <b>'
+&lt;a href=&quot;x&quot;&gt;Q&amp;A&lt;/a&gt;
+'caf&#233;'
+\end{rawcode}
+
+\begin{typecheck}
+\code{html.unescape(str)} returns \code{str}. For the other direction on a whole string, you
+encode to ASCII with \code{xmlcharrefreplace} and get \code{bytes}; call \code{.decode()} to get
+a \code{str} again. For the markup characters \code{< > \& "} use \code{html.escape()}.
+The module \code{html.entities} also holds dictionaries of names such as \code{html5} and
+\code{codepoint2name}.
+\end{typecheck}
+
+\subsection{Normalization}
+
+Some visible characters can be built in more than one way. The letter \'e can be one code
+point (\code{U+00E9}) or a plain \code{e} followed by a combining accent (\code{U+0301}). They
+look identical. They are not equal.
+
+\begin{pycode}
+import unicodedata
+
+one = "\u00e9"
+two = "e\u0301"
+print(one == two, len(one), len(two))
+n = unicodedata.normalize("NFC", two)
+print(n == one, len(n))
+print(len(unicodedata.normalize("NFD", one)))
+print(unicodedata.normalize("NFKC", "\ufb01"), len("\ufb01"))
+\end{pycode}
+\begin{rawcode}
+False 1 2
+True 1
+2
+fi 1
+\end{rawcode}
+
+\begin{center}
+\begin{tikzpicture}[>=Stealth]
+  \node[c17chr,minimum width=16mm] (a) at (0,0.8) {U+00E9};
+  \node[c17chr] (b1) at (-0.7,-0.6) {e};
+  \node[c17chr,minimum width=16mm] (b2) at (0.9,-0.6) {U+0301};
+  \node[font=\sffamily\scriptsize,anchor=east] at (-1.4,0.8) {length 1};
+  \node[font=\sffamily\scriptsize,anchor=east] at (-1.4,-0.6) {length 2};
+  \node[draw=cteal,fill=cteal!10,rounded corners=2pt,font=\ttfamily\small] (n) at (4.6,0.1) {NFC};
+  \node[c17chr,minimum width=16mm] (r) at (7.6,0.1) {U+00E9};
+  \draw[->,thick,cgray] (a.east) -- (n.north west);
+  \draw[->,thick,cgray] (b2.east) -- (n.south west);
+  \draw[->,thick,cgray] (n) -- (r);
+  \node[font=\sffamily\scriptsize,text=cred] at (0.1,-1.45) {look identical, but \code{==} is False};
+  \node[font=\sffamily\scriptsize,text=cgreen!60!black] at (7.6,-0.8) {now \code{==} is True};
+\end{tikzpicture}
+\end{center}
+% MD-BEGIN
+% ```text
+% "é"  = [U+00E9]            length 1  ─┐
+%                                        ├─ normalize("NFC") ─> [U+00E9]  (equal)
+% "é"  = [e][U+0301]         length 2  ─┘
+% ```
+% MD-END
+
+\code{NFC} composes characters into the shortest form, \code{NFD} splits them apart. The
+\code{NFKC} and \code{NFKD} forms also fold look-alikes (the one-character ligature \emph{fi}
+becomes the two letters \code{fi}).
+
+\begin{gamerule}
+Normalize text with \code{unicodedata.normalize("NFC", s)} before you compare it, hash it, use
+it as a dict key, or deduplicate a dataset. Two strings from different sources can look the same
+and still be different keys.
+\end{gamerule}
+
+% ------------------------------------------------------------
+\section{Text Strings: Regular Expressions}
+
+A regular expression (regex) is a small pattern language for describing text. The standard
+module is \code{re}. You give it a pattern and a source string. The pattern is itself a
+\code{str}.
+
+\subsection{The five basic functions}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+\textbf{Function} & \textbf{Returns} & \textbf{Meaning} \\
+\midrule
+\code{re.match(p, s)} & \code{Match} or \code{None} & pattern must match at the \emph{start} of \code{s} \\
+\code{re.search(p, s)} & \code{Match} or \code{None} & first match anywhere in \code{s} \\
+\code{re.findall(p, s)} & \code{list} & every non-overlapping match \\
+\code{re.split(p, s)} & \code{list} & pieces of \code{s} between matches \\
+\code{re.sub(p, repl, s)} & \code{str} & copy of \code{s} with matches replaced \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+The difference between the first two functions is where they are willing to look:
+
+\begin{center}
+\begin{tikzpicture}[>=Stealth]
+  \foreach \c [count=\i from 0] in {e,r,r,\textvisiblespace,4,0,4,\textvisiblespace,o,k}
+    \node[c17cell] (s\i) at (\i*0.6,0) {\c};
+  \node[font=\sffamily\footnotesize,anchor=east] at (-0.5,0) {source};
+  \node[text=cred,font=\bfseries] at (0,-0.9) {\xmark};
+  \node[font=\sffamily\scriptsize,anchor=west] at (0.5,-0.9) {\code{match(r"\textbackslash d+")}: only tries position 0, fails};
+  \draw[fill=cgreen!25,draw=cgreen] (2.1,-1.45) rectangle (3.9,-1.85);
+  \node[font=\sffamily\scriptsize,anchor=west] at (4.7,-1.65) {\code{search(r"\textbackslash d+")}: slides along, finds \code{404} at 4..7};
+  \draw[->,thick,cgreen] (0,-1.65) -- (2.0,-1.65);
+  \foreach \i in {4,5,6} \node[fill=cgreen!25,draw=cgreen,minimum width=5.2mm,minimum height=6.5mm,
+     inner sep=0pt,font=\ttfamily\small] at (\i*0.6,0) {\ifnum\i=5 0\else 4\fi};
+\end{tikzpicture}
+\end{center}
+% MD-BEGIN
+% ```text
+% index :  0 1 2 3 4 5 6 7 8 9
+% source:  e r r _ 4 0 4 _ o k
+% match : ^ tries only index 0 -> no digit there -> None
+% search: ----------> slides right, first hit is "404" at span (4, 7)
+% ```
+% MD-END
+
+Our sample is one log line from a training run.
+
+\begin{pycode}
+import re
+
+line = "2025-03-14 12:01:07 INFO run=a17 model=small-7b loss=0.3125 tokens=1520"
+
+print(re.match(r"\d{4}", line))      # starts with 4 digits
+print(re.match(r"INFO", line))       # INFO is not at the start
+print(re.search(r"INFO", line))      # but it is somewhere
+m = re.search(r"loss=(\d+\.\d+)", line)
+print(type(m))
+print(m.group(), m.group(1), m.groups(), m.span())
+print(float(m.group(1)) + 1)
+print(re.search(r"nope", line))
+if m := re.search(r"tokens=(\d+)", line):
+    print(int(m.group(1)) * 2)
+\end{pycode}
+\begin{rawcode}
+<re.Match object; span=(0, 4), match='2025'>
+None
+<re.Match object; span=(20, 24), match='INFO'>
+<class 're.Match'>
+loss=0.3125 0.3125 ('0.3125',) (48, 59)
+1.3125
+None
+3040
+\end{rawcode}
+
+Here is what the groups of the \code{loss} pattern cover. Group 0 is the whole match, group 1
+is only the part in parentheses.
+
+\begin{center}
+\begin{tikzpicture}[>=Stealth,decoration={brace,mirror,amplitude=4pt}]
+  \foreach \c [count=\i from 0] in {r,u,n,\textvisiblespace,l,o,s,s,=,0,.,3,1,\textvisiblespace,o,k}
+    \node[c17cell] (s\i) at (\i*0.6,0) {\c};
+  \foreach \i in {0,4,9,13,16} \node[font=\sffamily\tiny,text=cgray] at (\i*0.6-0.3,0.55) {\i};
+  \draw[decorate,thick,cblue] (2.1,-0.4) -- (7.5,-0.4) coordinate[pos=0.5] (g0);
+  \node[font=\sffamily\scriptsize,text=cblue,below=3mm] at (g0) {group 0: \code{loss=0.31}, span (4, 13)};
+  \draw[decorate,thick,cgold] (5.1,-1.5) -- (7.5,-1.5) coordinate[pos=0.5] (g1);
+  \node[font=\sffamily\scriptsize,text=cgold!70!black,below=3mm] at (g1) {group 1: \code{0.31}, span (9, 13)};
+\end{tikzpicture}
+\end{center}
+% MD-BEGIN
+% ```text
+% index :  0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15
+% text  :  r u n _ l o s s = 0  .  3  1  _  o  k
+%                  |<---- group 0 ---->|              span (4, 13)  "loss=0.31"
+%                            |<- g1 ->|                span (9, 13)  "0.31"
+% pattern: loss=(\d+\.\d+)
+% ```
+% MD-END
+
+\begin{typecheck}
+\code{match} and \code{search} return a \code{re.Match} object or \code{None}, never a plain
+string. \code{m.group()} is the whole match, \code{m.group(1)} is the first parenthesised
+part, \code{m.groups()} is a tuple of all of them. Every group is a \code{str}, even if it looks
+like a number. Convert with \code{float()} or \code{int()}.
+\end{typecheck}
+
+\begin{trap}
+Calling \code{m.group()} when \code{m} is \code{None} raises \code{AttributeError}. Always test
+first (\code{if m:}) or use the walrus form shown above. And remember: \code{match} only
+tries the start of the string. People expect it to behave like \code{search}.
+\end{trap}
+
+\code{findall}, \code{split} and \code{sub} work on the whole string:
+
+\begin{pycode}
+print(re.findall(r"\d+", line))
+print(re.findall(r"(\w+)=(\S+)", line))
+print(dict(re.findall(r"(\w+)=(\S+)", line)))
+print(re.split(r"\s*,\s*", "a , b,c ,d"))
+print(re.sub(r"\d", "#", "key 12345 here"))
+print(re.sub(r"(\w+)=(\S+)", r"\2:\1", "a=1 b=2"))
+print(re.sub(r"\d+", lambda m: str(int(m.group()) * 2), "3 apples 10 pears"))
+\end{pycode}
+\begin{rawcode}
+['2025', '03', '14', '12', '01', '07', '17', '7', '0', '3125', '1520']
+[('run', 'a17'), ('model', 'small-7b'), ('loss', '0.3125'), ('tokens', '1520')]
+{'run': 'a17', 'model': 'small-7b', 'loss': '0.3125', 'tokens': '1520'}
+['a', 'b', 'c', 'd']
+key ##### here
+1:a 2:b
+6 apples 20 pears
+\end{rawcode}
+
+Notes on the output:
+\begin{itemize}[nosep]
+  \item The first \code{findall} grabs digits from inside \code{a17}, \code{small-7b} and
+        \code{0.3125} too. A pattern that is too loose finds too much.
+  \item \code{findall} returns a list of strings if the pattern has no groups, a list of strings
+        if it has one group, and a list of \emph{tuples} if it has two or more.
+  \item In \code{sub}, \code{\textbackslash 1}, \code{\textbackslash 2} refer to groups. The
+        replacement can also be a \emph{function} that receives the match and returns a string.
+\end{itemize}
+
+Other tools you will use daily: \code{re.finditer()} (like \code{findall} but yields
+\code{Match} objects with positions), \code{re.fullmatch()} (the whole string must match), and
+\code{re.compile(p)} (build the pattern once, reuse it; the compiled object has the same methods).
+
+\begin{pycode}
+for mm in re.finditer(r"\d+", "x12 y345"):
+    print(mm.group(), mm.start(), mm.end())
+print(re.fullmatch(r"\d+", "123"))
+print(re.fullmatch(r"\d+", "123a"))
+pat = re.compile(r"error", re.IGNORECASE)
+print(pat.findall("Error ERROR error"))
+\end{pycode}
+\begin{rawcode}
+12 1 3
+345 5 8
+<re.Match object; span=(0, 3), match='123'>
+None
+['Error', 'ERROR', 'error']
+\end{rawcode}
+
+\subsection{Patterns}
+
+\subsubsection*{Special characters}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+\textbf{Pattern} & \textbf{Matches} \\
+\midrule
+\code{\textbackslash d} / \code{\textbackslash D} & a digit / a non-digit \\
+\code{\textbackslash w} / \code{\textbackslash W} & a letter, digit or underscore / anything else \\
+\code{\textbackslash s} / \code{\textbackslash S} & a whitespace character / a non-whitespace character \\
+\code{\textbackslash b} / \code{\textbackslash B} & a word boundary / not a word boundary \\
+\code{.} & any single character except newline \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+For \code{str} patterns these classes are Unicode-aware. \code{\textbackslash d} matches digits
+from other scripts, and \code{\textbackslash w} matches accented letters. Add the flag
+\code{re.ASCII} if you want plain ASCII only.
+
+\begin{pycode}
+print(ascii(re.findall(r"\d", "a1\u0663")))
+print(ascii(re.findall(r"\d", "a1\u0663", re.ASCII)))
+x = "abc-/*\u00ea\u0115"
+print(ascii(re.findall(r"\w", x)))
+\end{pycode}
+\begin{rawcode}
+['1', '\u0663']
+['1']
+['a', 'b', 'c', '\xea', '\u0115']
+\end{rawcode}
+
+\subsubsection*{Specifiers}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+\textbf{Pattern} & \textbf{Meaning} \\
+\midrule
+\code{abc} & the literal text \code{abc} \\
+\code{(expr)} & group: treat \code{expr} as a unit and capture it \\
+\code{a|b} & \code{a} or \code{b} \\
+\code{\^{}} \ \ \code{\$} & start / end of the string (anchors) \\
+\code{x?} \ \code{x*} \ \code{x+} & zero or one / zero or more / one or more \code{x} \\
+\code{x\{m\}} \ \code{x\{m,n\}} & exactly \code{m} / between \code{m} and \code{n} \code{x} \\
+\code{x*?} \ \code{x+?} \ \code{x??} & the same, but match as \emph{little} as possible (lazy) \\
+\code{[abc]} \ \code{[\^{}abc]} & one of these characters / any character \emph{not} listed \\
+\code{x(?=y)} \ \code{x(?!y)} & \code{x} only if followed / not followed by \code{y} \\
+\code{(?<=y)x} \ \code{(?<!y)x} & \code{x} only if preceded / not preceded by \code{y} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{pycode}
+src = "I wish I may, I wish I might\nHave a dish of fish tonight."
+print(re.findall(r"wish|fish", src))
+print(re.findall(r"^wish", src), re.findall(r"^I wish", src))
+print(re.findall(r"fish$", src), re.findall(r"fish tonight\.$", src))
+print(re.findall(r"[wf]ish", src))
+print(re.findall(r"[^aeiou\s]+", "hello world"))
+print(re.findall(r"I (?=wish)", src))
+print(re.findall(r"(?<=I) wish", src))
+print(re.findall(r"I (?!wish)", src))
+\end{pycode}
+\begin{rawcode}
+['wish', 'wish', 'fish']
+[] ['I wish']
+[] ['fish tonight.']
+['wish', 'wish', 'fish']
+['h', 'll', 'w', 'rld']
+['I ', 'I ']
+[' wish', ' wish']
+['I ', 'I ']
+\end{rawcode}
+
+By default \code{\^{}} and \code{\$} look only at the start and end of the \emph{whole} string.
+Add \code{re.MULTILINE} to make them work per line, and \code{re.DOTALL} so that \code{.}
+also matches a newline.
+
+\begin{pycode}
+print(re.findall(r"^\w+", "ab cd\nef gh"))
+print(re.findall(r"^\w+", "ab cd\nef gh", re.MULTILINE))
+print(re.findall(r"a.b", "a\nb"), re.findall(r"a.b", "a\nb", re.DOTALL))
+\end{pycode}
+\begin{rawcode}
+['ab']
+['ab', 'ef']
+[] ['a\nb']
+\end{rawcode}
+
+\subsubsection*{Greedy versus lazy}
+
+Quantifiers grab as much as they can. That surprises people when they extract text between two
+markers.
+
+\begin{pycode}
+t = "<b>one</b><b>two</b>"
+print(re.findall(r"<b>.*</b>", t))      # greedy: one big match
+print(re.findall(r"<b>.*?</b>", t))     # lazy: stops at the first </b>
+print(re.findall(r"a{2,3}", "a aa aaa aaaa"))
+\end{pycode}
+\begin{rawcode}
+['<b>one</b><b>two</b>']
+['<b>one</b>', '<b>two</b>']
+['aa', 'aaa', 'aaa']
+\end{rawcode}
+
+\begin{center}
+\begin{tikzpicture}[>=Stealth]
+  \foreach \c [count=\i from 0] in {<,b,>,o,n,e,<,\slash,b,>,<,b,>,t,w,o,<,\slash,b,>}
+    \node[c17cell,minimum width=4.6mm] (s\i) at (\i*0.52,0) {\c};
+  \node[font=\sffamily\scriptsize,anchor=east] at (-0.4,0) {source};
+  \draw[fill=cred!20,draw=cred,rounded corners=2pt] (-0.25,-0.55) rectangle (9.85,-0.95);
+  \node[font=\sffamily\scriptsize,anchor=east] at (-0.4,-0.75) {greedy \code{.*}};
+  \node[font=\sffamily\scriptsize] at (5,-0.75) {one match: swallows everything up to the \emph{last} \code{</b>}};
+  \draw[fill=cgreen!25,draw=cgreen,rounded corners=2pt] (-0.25,-1.25) rectangle (4.85,-1.65);
+  \draw[fill=cgreen!25,draw=cgreen,rounded corners=2pt] (5.0,-1.25) rectangle (9.85,-1.65);
+  \node[font=\sffamily\scriptsize,anchor=east] at (-0.4,-1.45) {lazy \code{.*?}};
+  \node[font=\sffamily\scriptsize] at (2.3,-1.45) {match 1};
+  \node[font=\sffamily\scriptsize] at (7.4,-1.45) {match 2};
+\end{tikzpicture}
+\end{center}
+% MD-BEGIN
+% ```text
+% source: <b>one</b><b>two</b>
+% greedy  <b>.*</b> : [<b>one</b><b>two</b>]            one big match
+% lazy    <b>.*?</b>: [<b>one</b>] [<b>two</b>]         two small matches
+% ```
+% MD-END
+
+\subsubsection*{Always use raw strings for patterns}
+
+In a normal string, \code{"\textbackslash b"} is the backspace character. In a regex,
+\code{\textbackslash b} means word boundary. Put an \code{r} before the quote so Python leaves
+backslashes alone.
+
+\begin{pycode}
+print(len("\b"), len(r"\b"))
+print(re.findall("\bcat", "cat"), re.findall(r"\bcat", "cat"))
+print(re.findall(r"\bcat\b", "cat concat cat."))
+print(re.escape("a.b*c"))
+print(re.findall("price: $5", "price: $5"))
+print(re.findall(re.escape("price: $5"), "price: $5"))
+\end{pycode}
+\begin{rawcode}
+1 2
+[] ['cat']
+['cat', 'cat']
+a\.b\*c
+[]
+['price: $5']
+\end{rawcode}
+
+\begin{trap}
+Forgetting the \code{r} prefix often \emph{works by accident} (\code{"\textbackslash d"} is
+left alone by Python) and then fails on \code{\textbackslash b}. Make the \code{r} a habit.
+Also escape special characters when you want them literally: use \code{\textbackslash .} for a
+dot, or let \code{re.escape()} do it for user-supplied text. The unescaped \code{\$} in the last
+example means ``end of string'', so it found nothing.
+\end{trap}
+
+\subsection{Specifying match output}
+
+Parentheses make groups. Add \code{?P<name>} inside to name a group; then you read it by
+name, or get a ready-made dict.
+
+\begin{pycode}
+m = re.search(r"run=(?P<run>\w+) .*loss=(?P<loss>[\d.]+)", line)
+print(m.group("run"), m["loss"], m.groupdict())
+out = "Answer: 42. Confidence: 0.87"
+print(re.search(r"Confidence:\s*([\d.]+)", out).group(1))
+\end{pycode}
+\begin{rawcode}
+a17 0.3125 {'run': 'a17', 'loss': '0.3125'}
+0.87
+\end{rawcode}
+
+\begin{gamerule}
+Use named groups for any pattern with more than one group, and compile it once at module level
+with a clear name (\code{LOSS\_RE}). Regexes are write-only if you do not name their parts.
+When the text is JSON, parse it with \code{json}, not regex. Use regex for text that has no
+better structure.
+\end{gamerule}
+
+% ------------------------------------------------------------
+\section{Review and what comes next}
+
+You now know that a \code{str} is Unicode code points, that \code{.encode()} and
+\code{.decode()} are the only doors between \code{str} and \code{bytes}, and that the \code{re}
+module finds, splits and rewrites text by pattern. The next chapter looks at the \code{bytes}
+side: binary data.
+
+\begin{practice}
+\begin{enumerate}[nosep,leftmargin=*]
+  \item Build a string holding the Unicode character with code point \code{U+1F984} using only
+        an escape sequence. Print its official name and its length.
+  \item Encode that string to UTF-8. How many bytes do you get? Decode them back and compare
+        with the original using \code{==}.
+  \item Why does \code{"e\textbackslash u0301" == "\textbackslash u00e9"} give \code{False}? Which
+        call makes the comparison true?
+  \item Write a pattern, with a raw string, that finds every number with a decimal point in the
+        text \code{"lr 0.001, wd 0.01, epochs 3"}. What does \code{findall} return?
+  \item Given \code{"[A] x [B] y"}, extract only the letters in brackets. First write it greedy so
+        it fails, then fix it.
+  \item You get \code{b"caf\textbackslash xc3\textbackslash xa9"} from an API. Which line turns it
+        into a \code{str}, and what goes wrong if you pass \code{"latin-1"}?
+\end{enumerate}
+\end{practice}
+
+\begin{achievement}{Text Wrangler}
+\begin{itemize}[nosep,leftmargin=*]
+  \item Tell \code{str} from \code{bytes} and convert between them with an explicit encoding.
+  \item Handle encoding errors on purpose, and recognise mojibake.
+  \item Normalize Unicode text before comparing it.
+  \item Extract fields from a log line with \code{search}, \code{findall} and named groups.
+  \item Write regex patterns as raw strings and avoid the greedy trap.
+\end{itemize}
+\end{achievement}

@@ -5,3 +5,4 @@ logs/
 media/
 notes/latex/build/
 *.log
+notes/python/build/

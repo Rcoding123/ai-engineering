@@ -1,0 +1,713 @@
+\chapter{Debugging}
+
+\usetikzlibrary{shapes.geometric}
+\tikzset{pbox/.style={draw=cgray,fill=cgray!8,rounded corners=2pt,font=\sffamily\small,
+    inner sep=4pt,align=center},
+  pdec/.style={pbox,diamond,aspect=2.6,inner sep=0pt,draw=cgold,fill=cgold!12},
+  parr/.style={-{Stealth[length=2mm]},thick,cgray}}
+
+Bugs happen even with good tests. Debugging is the skill of finding out \emph{why} the program does what it does,
+quickly and without guessing. This chapter goes from cheap tools (reading a traceback, \code{print}, f-strings) to
+better ones (\code{assert}, \code{logging}) to the real debugger (\code{pdb}, \code{breakpoint()}).
+
+% ------------------------------------------------------------
+\section{Start here: read the traceback}
+
+Debug from the bottom up first: you or a recent change broke it, so look at what you changed last.
+If that fails, question what you trusted (a library, the data from an API); that is the slower, top-down search.
+
+A \textbf{traceback} lists the chain of function calls that led to the error. Here is a program that fails when the API returns an
+error payload instead of a normal reply (paths shortened with \code{...}):
+
+\begin{pycode}
+# usage_report.py
+import json
+
+def get_tokens(payload):
+    return payload["usage"]["output_tokens"]
+
+def report(raw):
+    payload = json.loads(raw)
+    return f"output tokens: {get_tokens(payload)}"
+
+ok = '{"usage": {"output_tokens": 73}}'
+error = '{"type": "error", "error": {"message": "overloaded"}}'
+
+print(report(ok))
+print(report(error))
+\end{pycode}
+\begin{rawcode}
+output tokens: 73
+Traceback (most recent call last):
+  File ".../usage_report.py", line 17, in <module>
+    print(report(error))
+  File ".../usage_report.py", line 10, in report
+    return f"output tokens: {get_tokens(payload)}"
+  File ".../usage_report.py", line 5, in get_tokens
+    return payload["usage"]["output_tokens"]
+           ~~~~~~~^^^^^^^^^
+KeyError: 'usage'
+\end{rawcode}
+
+(Real output. The \code{\textasciitilde} and \code{\textasciicircum} marker lines under the first two frames are left out.)
+
+\begin{center}
+%%MD-BEGIN
+% ```text
+% <module>      usage_report.py:17   print(report(error))        oldest call
+%    | calls
+%    v
+% report()      usage_report.py:10   get_tokens(payload)
+%    | calls
+%    v
+% get_tokens()  usage_report.py:5    payload["usage"][...]       <- failed here
+%    v
+% KeyError: 'usage'    <- WHAT went wrong (last line)
+% ```
+%%MD-END
+\begin{tikzpicture}[node distance=5mm,fr/.style={pbox,text width=8.6cm,align=left,font=\ttfamily\footnotesize}]
+  \node[fr] (a) {<module>\hfill usage\_report.py:17 \\ \textcolor{cgray}{print(report(error))}};
+  \node[fr,below=of a] (b) {report()\hfill usage\_report.py:10 \\ \textcolor{cgray}{return f"output tokens: \{get\_tokens(payload)\}"}};
+  \node[fr,below=of b,draw=cred,fill=cred!8] (c) {get\_tokens()\hfill usage\_report.py:5 \\ \textcolor{cgray}{return payload["usage"]["output\_tokens"]}};
+  \node[pbox,below=of c,draw=cred,fill=cred!15,text width=8.6cm] (d) {\ttfamily\footnotesize\bfseries KeyError: 'usage'};
+  \draw[parr] (a)--node[right,font=\sffamily\scriptsize]{calls}(b);
+  \draw[parr] (b)--node[right,font=\sffamily\scriptsize]{calls}(c);
+  \draw[parr,cred] (c)--(d);
+  \node[font=\sffamily\scriptsize,text=cgray,anchor=west] at ($(a.east)+(3mm,0)$) {oldest call: where the program started};
+  \node[font=\sffamily\scriptsize,text=cred,anchor=west] at ($(c.east)+(3mm,0)$) {the line that failed};
+  \node[font=\sffamily\scriptsize,text=cred,anchor=west] at ($(d.east)+(3mm,0)$) {\textbf{what} went wrong};
+\end{tikzpicture}
+\end{center}
+
+\begin{keyidea}[: how to read a traceback]
+Read from the \textbf{bottom}. The last line names the error and its message. The frame just above it is the line that failed.
+Walk upward until you find the first frame in \emph{your own} code; library frames are rarely the cause.
+Here the real question is not ``why a \code{KeyError}'' but ``why did the API return no \code{usage}?'': the answer is an error payload.
+\end{keyidea}
+
+\begin{center}
+%%MD-BEGIN
+% ```mermaid
+% flowchart TD
+%     S["Something is wrong"] --> Q{"Exception with a traceback?"}
+%     Q -- yes --> R["read the last line,<br/>then the last frame in YOUR code"]
+%     Q -- no --> W["wrong output or hang:<br/>narrow it down with print / f-string / logging"]
+%     R --> H{"cause clear?"}
+%     W --> H
+%     H -- no --> D["use the debugger:<br/>breakpoint() / pdb"]
+%     H -- yes --> F["fix it"]
+%     D --> F
+%     F --> T["add a regression test"]
+% ```
+%%MD-END
+\begin{tikzpicture}
+  \node[pbox,draw=cred,fill=cred!10] (s) at (0.9,0) {something\\is wrong};
+  \node[pdec] (q) at (3.9,0) {\footnotesize traceback?};
+  \node[pbox,text width=3.1cm] (r) at (7.2,1.0) {read last line,\\then last frame\\in \emph{your} code};
+  \node[pbox,text width=3.6cm] (w) at (7.4,-1.0) {wrong output or hang:\\print, f-string, logging};
+  \node[pdec] (h) at (10.6,0) {\footnotesize cause clear?};
+  \node[pbox] (d) at (10.6,-2.2) {debugger:\\\ttfamily breakpoint()};
+  \node[pbox,draw=cgreen,fill=cgreen!10] (f) at (14.0,0) {fix it,\\add a test};
+  \draw[parr] (s)--(q);
+  \draw[parr] (q)--node[above,sloped,font=\scriptsize\sffamily]{yes}(r.west);
+  \draw[parr] (q)--node[below,sloped,font=\scriptsize\sffamily]{no}(w.west);
+  \draw[parr] (r.east)--(h.north west); \draw[parr] (w.east)--(h.south west);
+  \draw[parr] (h)--node[above,font=\scriptsize\sffamily]{yes}(f);
+  \draw[parr] (h)--node[right,font=\scriptsize\sffamily]{no}(d);
+  \draw[parr] (d.east)-|(f.south);
+\end{tikzpicture}
+\end{center}
+
+% ------------------------------------------------------------
+\section{Assert}
+
+\code{assert condition, message} states something that \emph{must} be true. If it is false, Python raises
+\code{AssertionError} on the spot, with your message. Use it to catch impossible data early, before it causes a confusing
+failure ten lines later.
+
+\begin{pycode}
+# assert_demo.py
+def avg_tokens(counts):
+    assert len(counts) > 0, "counts must not be empty"
+    assert all(isinstance(c, int) for c in counts), f"ints only: {counts!r}"
+    return sum(counts) / len(counts)
+
+print(avg_tokens([10, 20]))
+print(avg_tokens([]))
+\end{pycode}
+\begin{rawcode}
+15.0
+Traceback (most recent call last):
+  ...
+AssertionError: counts must not be empty
+\end{rawcode}
+
+\begin{trap}
+Run Python with \code{-O} (\code{python -O assert\_demo.py}) and every \code{assert} is \emph{skipped}. The same call then fails
+later with a less helpful error:
+\begin{rawcode}
+ZeroDivisionError: division by zero
+\end{rawcode}
+So use \code{assert} for internal sanity checks and tests. For input you do not control (user input, API data), check explicitly with
+\code{if ...: raise ValueError(...)}.
+\end{trap}
+
+% ------------------------------------------------------------
+\section{Print}
+
+\code{print} is the fastest debugger. Print the values that matter, with labels. Three built-ins show variables:
+\code{vars()} (or \code{locals()}) gives the local variables as a dict; \code{globals()} gives the module's.
+
+\begin{pycode}
+import sys
+
+def func(*args, **kwargs):
+    print(vars())
+    print(sorted(locals()))
+
+func(1, 2, model="small")
+print("x" in globals())
+print("debug info", file=sys.stderr)       # to the error stream
+\end{pycode}
+\begin{rawcode}
+{'args': (1, 2), 'kwargs': {'model': 'small'}}
+['args', 'kwargs']
+True
+debug info
+\end{rawcode}
+
+Debug output sent to \code{sys.stderr} stays separate from normal output: you can redirect your program's real output to a file and
+still see the debug lines in the terminal.
+
+\begin{trap}
+Print debugging leaves clutter. Remove the prints before committing, or move them to \code{logging} (below), which you can switch off.
+\end{trap}
+
+% ------------------------------------------------------------
+\section{F-strings}
+
+An f-string inserts the value of any expression in \code{\{\}}. Adding \code{=} inside the braces prints the \emph{expression text and
+its value}, so you never mislabel a debug line.
+
+\begin{pycode}
+x = "thing"
+print(f"{x=}", f"{ x = }", f"{10/2=}")
+tokens = 1234
+print(f"{tokens=:,}")                   # with a format spec after the =
+print(f"{type(tokens)=}")
+\end{pycode}
+\begin{rawcode}
+x='thing'  x = 'thing' 10/2=5.0
+tokens=1,234
+type(tokens)=<class 'int'>
+\end{rawcode}
+
+Note \code{x='thing'}: the value is shown with \code{repr}, so strings have quotes, which makes stray spaces and \code{None} visible.
+
+% ------------------------------------------------------------
+\section{Pprint}
+
+\code{pprint} (``pretty print'') lays out nested data over several lines, indented. Use it for JSON-like API replies.
+
+\begin{pycode}
+from pprint import pprint
+
+text = "Hello there, how can I help you today?"
+reply = {"type": "message", "role": "assistant",
+         "content": [{"type": "text", "text": text}],
+         "usage": {"input_tokens": 22, "output_tokens": 73}}
+pprint(reply)
+\end{pycode}
+\begin{rawcode}
+{'content': [{'text': 'Hello there, how can I help you today?',
+              'type': 'text'}],
+ 'role': 'assistant',
+ 'type': 'message',
+ 'usage': {'input_tokens': 22, 'output_tokens': 73}}
+\end{rawcode}
+
+By default \code{pprint} sorts keys. Pass \code{sort\_dicts=False} to keep insertion order, and \code{width=60} to wrap sooner.
+For real JSON you may prefer \code{json.dumps(obj, indent=2)}.
+
+% ------------------------------------------------------------
+\section{IceCream}
+
+\textbf{IceCream} is a third-party package (\code{python -m pip install icecream}; not installed here, so the output below is
+the documented style, not a captured run). Its \code{ic()} prints the expression, its value, and optionally the file, line
+and function, and it \emph{returns} its argument, so you can wrap any sub-expression.
+
+\begin{pycode}
+from icecream import ic
+
+tokens = 73
+ic(tokens)                 # prints: ic| tokens: 73
+ic(tokens * 2)             # prints: ic| tokens * 2: 146
+
+
+def cost(n):
+    ic()                   # prints file:line and the function name
+    return n * 2
+
+
+total = ic(cost(5)) + 1    # ic returns 10, so the expression still works
+\end{pycode}
+
+It is a nice shortcut, but \code{print(f"\{x=\}")} gives you most of the benefit with no install.
+
+% ------------------------------------------------------------
+\section{Decorators}
+
+A decorator wraps a function to run code before or after it, without editing the function. That makes it a good place for debug output.
+Here \code{trace} prints the arguments and the result of every call:
+
+\begin{pycode}
+import functools
+
+
+def trace(func):
+    """Print arguments and result of every call."""
+    @functools.wraps(func)              # keep the original name and docstring
+    def wrapper(*args, **kwargs):
+        print(f"call {func.__name__} args={args} kwargs={kwargs}")
+        result = func(*args, **kwargs)
+        print(f"  -> {result!r}")
+        return result
+    return wrapper
+
+
+@trace
+def token_cost(model, tokens_in, tokens_out=0):
+    rates = {"small": (0.10, 0.50)}
+    r_in, r_out = rates[model]
+    return (tokens_in * r_in + tokens_out * r_out) / 1e6
+
+
+token_cost("small", 1000, tokens_out=500)
+print(token_cost.__name__)
+\end{pycode}
+\begin{rawcode}
+call token_cost args=('small', 1000) kwargs={'tokens_out': 500}
+  -> 0.00035
+token_cost
+\end{rawcode}
+
+\begin{typecheck}
+After \code{@trace}, the name \code{token\_cost} refers to \code{wrapper}, a new function. \code{*args} collects positional arguments into a
+tuple and \code{**kwargs} collects keyword arguments into a dict, so the wrapper accepts any call. Without \code{functools.wraps}
+the name would print as \code{wrapper}.
+\end{typecheck}
+
+% ------------------------------------------------------------
+\section{Logging}
+
+\code{print} output vanishes when the terminal closes, and has no timestamp or importance. The standard \code{logging} module records
+messages with a \textbf{level}, a time, and a name, and sends them where you choose. Use it in anything that runs longer than a quick script.
+
+\subsection{Levels}
+
+\begin{center}
+%%MD-BEGIN
+% ```text
+% CRITICAL 50  -----------------------+
+% ERROR    40                         |  shown when level=INFO
+% WARNING  30  (default level)        |
+% INFO     20  -----------------------+
+% ---------------- level=INFO cuts here ----------------
+% DEBUG    10  hidden
+% ```
+%%MD-END
+\begin{tikzpicture}
+  \foreach \i/\nm/\num/\c/\use in {0/CRITICAL/50/cred/{when the program cannot continue},
+      1/ERROR/40/cred/{a call failed; the program goes on},
+      2/WARNING/30/cgold/{something odd; the default threshold},
+      3/INFO/20/cblue/{normal progress: ``got reply, 73 tokens''},
+      4.5/DEBUG/10/cgray/{details: full request, variables}}{
+    \node[pbox,draw=\c,fill=\c!10,font=\ttfamily\footnotesize,minimum width=2.4cm,anchor=west] at (0,-\i*0.52) {\nm\ \num};
+    \node[font=\sffamily\footnotesize,anchor=west] at (2.7,-\i*0.52) {\use};}
+  \draw[dashed,cgray] (0,-1.95)--(11.5,-1.95);
+  \node[font=\sffamily\scriptsize,text=cgray,anchor=south east] at (11.5,-1.95) {\texttt{level=INFO} cuts here};
+  \node[font=\sffamily\scriptsize,text=cgray,anchor=north east] at (11.5,-1.95) {below the line: hidden};
+\end{tikzpicture}
+\end{center}
+
+Before any setup, only \code{WARNING} and above appear. This explains the book's puzzle of \code{debug} and \code{info} ``doing nothing'':
+
+\begin{pycode}
+import logging
+
+logging.debug("not shown: default level is WARNING")
+logging.info("not shown either")
+logging.warning("shown")
+logging.error("shown too")
+\end{pycode}
+\begin{rawcode}
+WARNING:root:shown
+ERROR:root:shown too
+\end{rawcode}
+
+(The functions \code{logging.warn} and \code{logging.fatal} are old, deprecated spellings; use \code{warning} and \code{critical}.)
+
+\subsection{Configure once, with named loggers}
+
+Call \code{basicConfig} \emph{once}, at the start of the program. Then each module asks for its own logger by name.
+Names with dots form a family tree: \code{"chat.api"} is a child of \code{"chat"}, which is a child of the root logger.
+
+\begin{pycode}
+# log2.py
+import logging
+
+logging.basicConfig(level=logging.DEBUG,
+                    format="%(levelname)-8s %(name)s:%(lineno)d %(message)s")
+log = logging.getLogger("chat.api")
+
+log.debug("sending request, model=%s", "small")
+log.info("got reply, output_tokens=%d", 73)
+log.warning("retrying after 429")
+try:
+    {}["usage"]
+except KeyError:
+    log.exception("could not read usage")     # message + the traceback
+print("parent:", log.parent.name)
+\end{pycode}
+\begin{rawcode}
+DEBUG    chat.api:7 sending request, model=small
+INFO     chat.api:8 got reply, output_tokens=73
+WARNING  chat.api:9 retrying after 429
+ERROR    chat.api:13 could not read usage
+Traceback (most recent call last):
+  File ".../log2.py", line 11, in <module>
+    {}["usage"]
+    ~~^^^^^^^^^
+KeyError: 'usage'
+parent: root
+\end{rawcode}
+
+Two habits are visible here. Pass values as arguments (\code{"model=\%s", "small"}) instead of building the string yourself, so
+Python formats it only if the message is actually emitted. Use \code{log.exception} inside \code{except}: it logs the traceback too.
+
+\begin{trap}
+\code{basicConfig} does nothing if the root logger already has handlers (an earlier call, or a library did it). Your level or format
+silently stays as before. Pass \code{force=True} to reset. Real output of three calls:
+\begin{pycode}
+import logging
+logging.basicConfig(level=logging.INFO, format="A %(message)s")
+logging.basicConfig(level=logging.DEBUG, format="B %(message)s")   # ignored
+logging.debug("debug?")                  # level is still INFO: hidden
+logging.info("info")
+logging.basicConfig(level=logging.DEBUG, format="C %(message)s", force=True)
+logging.debug("debug now")
+\end{pycode}
+\begin{rawcode}
+A info
+C debug now
+\end{rawcode}
+\end{trap}
+
+\subsection{Handlers and formatters}
+
+Logging has four parts. A \textbf{logger} is what your code calls. A \textbf{handler} decides \emph{where} a record goes
+(screen, file, email, web service). A \textbf{formatter} decides how it looks. A \textbf{filter} can drop records.
+
+\begin{center}
+%%MD-BEGIN
+% ```mermaid
+% flowchart LR
+%     C["your code<br/>log.info(...)"] --> L["logger 'chat'<br/>level check"]
+%     L --> H1["handler: console<br/>level INFO"] --> F1["formatter"] --> D1["terminal"]
+%     L --> H2["handler: file<br/>level DEBUG"] --> F2["formatter"] --> D2["debug.log"]
+% ```
+%%MD-END
+\begin{tikzpicture}[node distance=5mm]
+  \node[pbox,draw=cblue,fill=cblue!10] (c) {your code\\{\ttfamily\footnotesize log.info(...)}};
+  \node[pbox,right=of c] (l) {logger\\{\ttfamily\footnotesize "chat"}};
+  \node[pbox,right=12mm of l,yshift=7mm] (h1) {handler: console\\{\footnotesize level INFO}};
+  \node[pbox,right=12mm of l,yshift=-7mm] (h2) {handler: file\\{\footnotesize level DEBUG}};
+  \node[pbox,right=of h1] (f1) {formatter};
+  \node[pbox,right=of h2] (f2) {formatter};
+  \node[pbox,right=of f1,draw=cgreen,fill=cgreen!10] (d1) {terminal};
+  \node[pbox,right=of f2,draw=cgreen,fill=cgreen!10] (d2) {\ttfamily\footnotesize debug.log};
+  \draw[parr] (c)--(l); \draw[parr] (l)--(h1); \draw[parr] (l)--(h2);
+  \draw[parr] (h1)--(f1); \draw[parr] (h2)--(f2); \draw[parr] (f1)--(d1); \draw[parr] (f2)--(d2);
+\end{tikzpicture}
+\end{center}
+
+\begin{pycode}
+# log4.py
+import logging
+import sys
+
+log = logging.getLogger("chat")
+log.setLevel(logging.DEBUG)                  # logger lets everything through
+
+console = logging.StreamHandler(sys.stdout)
+console.setLevel(logging.INFO)               # but the screen shows INFO+
+console.setFormatter(logging.Formatter("%(levelname)s %(message)s"))
+
+logfile = logging.FileHandler("debug.log", encoding="utf-8")
+logfile.setLevel(logging.DEBUG)              # the file keeps everything
+logfile.setFormatter(logging.Formatter("%(levelname)s %(name)s %(message)s"))
+
+log.addHandler(console)
+log.addHandler(logfile)
+
+log.debug("prompt has 12 messages")
+log.info("reply received")
+log.error("rate limited")
+\end{pycode}
+\begin{rawcode}
+INFO reply received
+ERROR rate limited
+\end{rawcode}
+
+The file \code{debug.log} then contains all three:
+
+\begin{rawcode}
+DEBUG chat prompt has 12 messages
+INFO chat reply received
+ERROR chat rate limited
+\end{rawcode}
+
+For a simple one-file setup, \code{basicConfig(filename="app.log", level=..., format=...)} is enough. A format such as
+\code{"\%(asctime)s \%(levelname)s \%(message)s"} adds a time stamp, which looks like \code{2026-11-02 13:02:01,655 ERROR boom}.
+Other useful fields: \code{\%(name)s}, \code{\%(lineno)d}, \code{\%(funcName)s}.
+
+\begin{gamerule}[: logging in an LLM app]
+Log the model name, token counts, latency and the request id, at \code{INFO}. Log the full prompt only at \code{DEBUG}, because
+prompts can contain private data. \textbf{Never log an API key.} Keep the file out of Git (\code{.gitignore}).
+\end{gamerule}
+
+% ------------------------------------------------------------
+\section{Pdb: the debugger}
+
+A debugger runs your program under your control: you pause it, look at variables, and step through lines.
+Python's built-in debugger is \code{pdb}. Here is a data-dependent bug. The function should total tokens per model from lines like
+\code{"small,100"}, but the total for \code{small} comes out wrong.
+
+\begin{pycode}
+# totals.py
+def total_usage(lines):
+    totals = {}
+    for line in lines:
+        model, tokens = line.split(",")
+        totals[model] = int(tokens)
+    return totals
+
+
+if __name__ == "__main__":
+    data = ["small,100", "large,40", "small,50"]
+    print(total_usage(data))
+\end{pycode}
+\begin{rawcode}
+{'small': 50, 'large': 40}
+\end{rawcode}
+
+No exception, so there is no traceback to read: it is a \emph{logic} error. \code{small} should be 150. Start the program under pdb
+(\code{-m pdb}), set a breakpoint on line 5 with \code{b 5}, and continue with \code{c}:
+
+\begin{rawcode}
+> python -m pdb totals.py
+> ...\totals.py(1)<module>()
+-> def total_usage(lines):
+(Pdb) b 5
+Breakpoint 1 at ...\totals.py:5
+(Pdb) c
+> ...\totals.py(5)total_usage()
+-> totals[model] = int(tokens)
+(Pdb) c
+> ...\totals.py(5)total_usage()
+-> totals[model] = int(tokens)
+(Pdb) c
+> ...\totals.py(5)total_usage()
+-> totals[model] = int(tokens)
+(Pdb) p line
+'small,50'
+(Pdb) p totals
+{'small': 100, 'large': 40}
+(Pdb) n
+> ...\totals.py(3)total_usage()
+-> for line in lines:
+(Pdb) p totals
+{'small': 50, 'large': 40}
+\end{rawcode}
+
+(Real session; only the long path is shortened.) After the third stop, \code{totals} holds \code{small: 100}. The next \emph{single} line
+replaces it with 50: the code \emph{assigns} (\code{=}) where it should \emph{add}. Fix it, and turn the bug into a regression test:
+
+\begin{pycode}
+from collections import defaultdict
+
+
+def total_usage(lines):
+    totals = defaultdict(int)
+    for line in lines:
+        model, tokens = line.split(",")
+        totals[model] += int(tokens)        # add, do not overwrite
+    return dict(totals)
+
+
+def test_repeated_model_is_added():
+    data = ["small,100", "large,40", "small,50"]
+    assert total_usage(data) == {"small": 150, "large": 40}
+
+
+test_repeated_model_is_added()
+print(total_usage(["small,100", "large,40", "small,50"]))
+\end{pycode}
+\begin{rawcode}
+{'small': 150, 'large': 40}
+\end{rawcode}
+
+\subsection{Commands you will use}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l X l@{}}
+\toprule
+\textbf{pdb} & \textbf{Name} & \textbf{Does} & \textbf{VS Code} \\
+\midrule
+\code{n} & next & run this line, \emph{step over} any call & F10 \\
+\code{s} & step & \emph{step into} the call on this line & F11 \\
+\code{r} & return & run until the current function returns & Shift+F11 \\
+\code{c} & continue & run until the next breakpoint or the end & F5 \\
+\code{b 5} / \code{b} & breakpoint & set one on line 5 / list them all & click the gutter \\
+\code{l} / \code{ll} & list & show code around the line / the whole function & the editor \\
+\code{p expr} / \code{pp expr} & print & show a value / pretty-print it & Variables panel \\
+\code{w}, \code{u}, \code{d} & where, up, down & show the call stack, move between frames & Call Stack panel \\
+\code{q} & quit & stop the program and leave & Shift+F5 \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{center}
+%%MD-BEGIN
+% ```text
+%  line 8:  total = add(a, b)      <- paused here
+%                |
+%     n ---------+--------> line 9   (add() ran in one go)
+%     s ---------+--------> line 2 inside add()   (you are now in add)
+% ```
+%%MD-END
+\begin{tikzpicture}[node distance=7mm]
+  \node[pbox,draw=cgold,fill=cgold!12,font=\ttfamily\footnotesize,text width=4.3cm,align=left] (a) {8: total = add(a, b)};
+  \node[pbox,right=24mm of a,yshift=7mm,font=\ttfamily\footnotesize,text width=4.2cm,align=left] (b) {9: print(total)};
+  \node[pbox,right=24mm of a,yshift=-7mm,font=\ttfamily\footnotesize,text width=4.2cm,align=left] (c) {2: return a + b\\{\sffamily\scriptsize inside add()}};
+  \draw[parr] (a.east)--node[above,sloped,font=\ttfamily\scriptsize]{n: step over}(b.west);
+  \draw[parr] (a.east)--node[below,sloped,font=\ttfamily\scriptsize]{s: step into}(c.west);
+  \node[font=\sffamily\scriptsize,text=cgray,above=1mm of a] {paused here (the arrow \texttt{->} in pdb)};
+\end{tikzpicture}
+\end{center}
+
+\begin{gamerule}
+Use \code{n} when you trust a function (library code, code you tested) and \code{s} when you suspect it. Do not step line by line from the
+top: set a breakpoint near the suspect and \code{c} to it.
+\end{gamerule}
+
+\subsection{Post-mortem: debug a crash where it happened}
+
+If a program crashes, run it under \code{python -m pdb script.py} and type \code{c}. On the uncaught exception pdb stops at the failing frame (``post mortem''),
+with all variables intact. For \code{usage\_report.py} that looks like this (condensed from a real session):
+
+\begin{rawcode}
+(Pdb) c
+Uncaught exception. Entering post mortem debugging
+> ...\usage_report.py(5)get_tokens()
+-> return payload["usage"]["output_tokens"]
+(Pdb) p payload
+{'type': 'error', 'error': {'message': 'overloaded'}}
+(Pdb) up
+> ...\usage_report.py(10)report()
+(Pdb) p raw
+'{"type": "error", "error": {"message": "overloaded"}}'
+\end{rawcode}
+
+Now you can \emph{see} that the payload is an error object. The fix is to check before reading it:
+
+\begin{pycode}
+def get_tokens(payload):
+    if payload.get("type") == "error":
+        raise RuntimeError(payload["error"]["message"])
+    return payload["usage"]["output_tokens"]
+\end{pycode}
+
+Another useful flag is \code{python -i script.py}: after the script ends or crashes, you stay in the interactive prompt and can inspect the variables.
+
+% ------------------------------------------------------------
+\section{\texttt{breakpoint()}}
+
+Add \code{breakpoint()} to your code and Python opens pdb \emph{at that line}, with no setup. It is the quickest way into the debugger.
+
+\begin{pycode}
+# bp.py
+def total_usage(lines):
+    totals = {}
+    for line in lines:
+        model, tokens = line.split(",")
+        breakpoint()                       # pause here on every loop
+        totals[model] = totals.get(model, 0) + int(tokens)
+    return totals
+
+print(total_usage(["small,100", "small,50"]))
+\end{pycode}
+\begin{rawcode}
+> ...\bp.py(6)total_usage()
+-> totals[model] = totals.get(model, 0) + int(tokens)
+(Pdb) p model, tokens
+('small', '100')
+(Pdb) c
+> ...\bp.py(6)total_usage()
+-> totals[model] = totals.get(model, 0) + int(tokens)
+(Pdb) p totals
+{'small': 100}
+(Pdb) c
+{'small': 150}
+\end{rawcode}
+
+The environment variable \code{PYTHONBREAKPOINT} chooses what \code{breakpoint()} does. Setting it to \code{0} turns every breakpoint off
+without editing the code (real output of the same run):
+
+\begin{rawcode}
+> set PYTHONBREAKPOINT=0                (cmd.exe)
+> $env:PYTHONBREAKPOINT = "0"           (PowerShell)
+> python bp.py
+{'small': 150}
+\end{rawcode}
+
+Setting it to the name of another debugger function (for example \code{web\_pdb.set\_trace}, from a package you install) switches debugger.
+
+\begin{trap}
+Never commit a \code{breakpoint()} call: a server or a CI job would stop and wait for input forever. Search for it before every commit
+(\code{git grep breakpoint}), or let your linter flag it.
+\end{trap}
+
+\begin{boss}[: find the cause, do not guess]
+Programmers lose hours changing code at random. A better loop has four steps:
+(1) \textbf{reproduce} the bug with the smallest input that still fails (three lines of data, not the whole file);
+(2) \textbf{state a hypothesis} about the cause (``the dict value is overwritten, not added'');
+(3) \textbf{test the hypothesis} by observing, not changing: \code{print}, a log line, or \code{p totals} in pdb at the right moment;
+(4) \textbf{fix one thing, then add a test} that fails without the fix. If the observation does not match your hypothesis, your mental model is wrong;
+revise it instead of editing more code. Most hard bugs are a wrong assumption about the data, not a wrong line of code.
+\end{boss}
+
+\begin{practice}
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+\item A traceback ends with \code{KeyError: 'usage'}. Which line of the traceback do you read first, and what two questions do you ask next?
+\item Use an f-string with \code{=} to print the expression \code{len(messages) * 2} and its value, and the type of the variable \code{reply}.
+\item Why does \code{logging.debug("x")} print nothing in a fresh script? Give two different ways to make it appear.
+\item Set up logging so that INFO and above go to the screen but DEBUG and above also go to a file. Which objects do you create?
+\item You run \code{python -O} and a check vanishes. Which statement was it, and what should you use for checking user input instead?
+\item In pdb, you are on a line that calls \code{summarize(client, text)}. What is the difference between typing \code{n} and \code{s}?
+\end{enumerate}
+\end{practice}
+
+\begin{achievement}{Bug Hunter}
+\begin{itemize}[leftmargin=*,itemsep=1pt]
+\item Read a traceback from the bottom and locate the failing line in your own code.
+\item Debug with f-string \code{=}, \code{pprint}, \code{assert} and a tracing decorator.
+\item Configure \code{logging} with levels, named loggers, a file handler and a format.
+\item Step through code in \code{pdb}, set breakpoints, inspect variables, and debug a crash post-mortem.
+\item Turn a fixed bug into a regression test.
+\end{itemize}
+\end{achievement}
+
+%%MD-BEGIN
+% **Related:** [[10 - Functions]] (decorators, `*args`), [[04 - Strings]] (f-strings), [[09 - Dictionaries and Sets]] (`KeyError`), [[13 - Development Environment]] (which Python?), [[14 - Type Hints and Documentation]] (catch bugs earlier), [[15 - Testing]] (regression tests), [[20 - Files]] (log files).
+%%MD-END

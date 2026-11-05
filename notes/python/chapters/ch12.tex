@@ -1,0 +1,768 @@
+\chapter{Modules and Packages}
+
+\usetikzlibrary{shapes.geometric}
+\tikzset{pbox/.style={draw=cgray,fill=cgray!8,rounded corners=2pt,font=\sffamily\small,
+    inner sep=4pt,align=center},
+  pdec/.style={pbox,diamond,aspect=2.4,inner sep=0pt,draw=cgold,fill=cgold!12},
+  parr/.style={-{Stealth[length=2mm]},thick,cgray}}
+\providecommand{\tnode}[4]{\node[anchor=west,text=#4] at (#1,-#2*0.46) {\ttfamily\small #3};}
+
+Until now your code lived in one file. This chapter shows how to split it across files
+(modules), group files into folders (packages), and reuse the large standard library.
+These are the skills you need before you can organise a real LLM project, or install
+the \code{anthropic} package and import it.
+
+% ------------------------------------------------------------
+\section{Modules and the import statement}
+
+A \textbf{module} is any Python file. There is nothing to declare: if a file is called
+\code{pricing.py}, then \code{import pricing} makes its names available.
+
+\begin{pycode}
+# pricing.py  (the module)
+print("pricing.py is running")
+
+PRICES = {"small": (0.10, 0.50), "large": (4.00, 20.00)}  # USD per 1M tokens
+
+def cost_usd(model, tokens_in, tokens_out):
+    price_in, price_out = PRICES[model]
+    return tokens_in / 1e6 * price_in + tokens_out / 1e6 * price_out
+\end{pycode}
+
+\begin{pycode}
+# app1.py  (same folder)
+import pricing
+
+print(type(pricing))
+print(pricing.__name__)
+print(f"{pricing.cost_usd('small', 22, 73):.6f}")
+import pricing           # second import: file is NOT run again
+import sys
+print("pricing" in sys.modules)
+\end{pycode}
+\begin{rawcode}
+pricing.py is running
+<class 'module'>
+pricing
+0.000039
+True
+\end{rawcode}
+
+Note that \code{pricing.py is running} printed only once, even though we imported twice.
+
+\begin{typecheck}
+\code{import pricing} binds the name \code{pricing} to a \textbf{module object}
+(\code{<class 'module'>}). Names inside it are attributes: \code{pricing.PRICES},
+\code{pricing.cost\_usd}. The \emph{file} runs once, the first time it is imported.
+\end{typecheck}
+
+\subsection{How an import is resolved}
+
+\begin{center}
+%%MD-BEGIN
+% ```mermaid
+% flowchart TD
+%     A["import pricing"] --> B{"in sys.modules?"}
+%     B -- yes --> C["reuse cached module object"]
+%     B -- no --> D["search sys.path in order"]
+%     D --> E{"found?"}
+%     E -- no --> F["ModuleNotFoundError"]
+%     E -- yes --> G["run the file top to bottom, once"]
+%     G --> H["store in sys.modules"]
+%     H --> I["bind the name pricing"]
+%     C --> I
+% ```
+%%MD-END
+\begin{tikzpicture}[node distance=5mm and 8mm]
+  \node[pbox,draw=cblue,fill=cblue!10] (a) {\ttfamily import pricing};
+  \node[pdec,right=of a] (b) {\ttfamily\footnotesize in sys.modules?};
+  
+  \node[pbox,below=of b] (d) {search \ttfamily sys.path\\in order};
+  \node[pdec,below=of d] (e) {found?};
+  \node[pbox,left=of e,draw=cred,fill=cred!10] (f) {\ttfamily ModuleNotFoundError};
+  \node[pbox,right=of e] (g) {run the file once,\\store in \ttfamily sys.modules};
+  \node[pbox,draw=cgreen,fill=cgreen!10,right=of g] (h) {bind the name\\\ttfamily pricing};
+  \node[pbox,draw=cgreen,fill=cgreen!10] (c) at (h |- b) {reuse the\\cached module};
+  \draw[parr] (a)--(b);
+  \draw[parr] (b)--node[above,font=\scriptsize\sffamily]{yes}(c);
+  \draw[parr] (b)--node[right,font=\scriptsize\sffamily]{no}(d);
+  \draw[parr] (d)--(e);
+  \draw[parr] (e)--node[above,font=\scriptsize\sffamily]{no}(f);
+  \draw[parr] (e)--node[above,font=\scriptsize\sffamily]{yes}(g);
+  \draw[parr] (g)--(h);
+  \draw[parr] (c)--(h);
+\end{tikzpicture}
+\end{center}
+
+\subsection{The three import forms}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l >{\raggedright\arraybackslash}p{0.33\linewidth} >{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Form} & \textbf{You get} & \textbf{Use when} \\
+\midrule
+\code{import pricing} & module object; write \code{pricing.cost\_usd(...)} & default choice, no name clashes \\
+\code{import pricing as p} & the same module, shorter name & long names, or two modules with the same name \\
+\code{from pricing import cost\_usd} & the \emph{function itself}, no prefix & you use one or two names a lot \\
+\code{from pricing import cost\_usd as price} & the function under a new name & name clash with your own code \\
+\code{from pricing import *} & every public name & almost never \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{pycode}
+# app2.py
+from pricing import cost_usd as price_it
+import pricing as p
+
+print(type(price_it))
+print(price_it("large", 1000, 500))
+print(p.PRICES["small"])
+\end{pycode}
+\begin{rawcode}
+pricing.py is running
+<class 'function'>
+0.014
+(0.1, 0.5)
+\end{rawcode}
+
+\begin{typecheck}
+\code{import x} gives you a \code{module}. \code{from x import y} gives you whatever \code{y}
+is (a function, a dict, a class). Even with \code{from}, the whole module still runs, as the
+first output line shows.
+\end{typecheck}
+
+\begin{trap}
+\code{from module import *} dumps unknown names into your file. A later line can silently
+overwrite one of your own variables, and you cannot tell where a name came from.
+Import the names you need, or the module.
+\end{trap}
+
+\begin{gamerule}[: where to put imports]
+Put imports at the top of the file, standard library first, then third-party (such as
+\code{anthropic}), then your own modules. Everyone can see the dependencies at a glance.
+Import inside a function only when it is rarely used or slow to load.
+\end{gamerule}
+
+\subsection{\texttt{\_\_name\_\_} and running a module as a script}
+
+Every module has a \code{\_\_name\_\_}. If you import it, the name is the module name. If you run
+the file directly, the name is \code{"\_\_main\_\_"}. This lets one file be both a library and a script.
+
+\begin{pycode}
+# greet.py
+def hello(name):
+    return f"hello {name}"
+
+if __name__ == "__main__":      # only true when run directly
+    print(hello("world"))
+\end{pycode}
+
+% ------------------------------------------------------------
+\section{Packages}
+
+A \textbf{package} is a folder of modules. You import from it with a dotted name. Put an
+(often empty) \code{\_\_init\_\_.py} in the folder: it marks the folder as a regular package and its
+code runs when the package is first imported.
+
+\begin{center}
+%%MD-BEGIN
+% ```text
+% chatapp/
+% |-- main.py
+% `-- chatkit/              <- the package
+%     |-- __init__.py       <- runs on "import chatkit"
+%     |-- tokens.py         <- import chatkit.tokens
+%     `-- costs.py          <- import chatkit.costs
+% ```
+%%MD-END
+\begin{tikzpicture}
+  \tnode{0}{0}{chatapp}{cblue}
+  \draw[cgray] (0.15,-0.3)--(0.15,-0.92);
+  \foreach \i/\nm/\cl in {1/main.py/ink,2/chatkit/cblue}{
+    \draw[cgray] (0.15,-\i*0.46)--(0.4,-\i*0.46);
+    \tnode{0.45}{\i}{\nm}{\cl}}
+  \draw[cgray] (0.7,-1.2)--(0.7,-2.3);
+  \foreach \i/\nm in {3/\_\_init\_\_.py,4/tokens.py,5/costs.py}{
+    \draw[cgray] (0.7,-\i*0.46)--(0.95,-\i*0.46);
+    \tnode{1.0}{\i}{\nm}{ink}}
+  \node[font=\sffamily\footnotesize,text=cgray,anchor=west] at (4.2,-0.92) {the package};
+  \node[font=\sffamily\footnotesize,text=cgray,anchor=west] at (4.2,-1.38) {runs on \texttt{import chatkit}};
+  \node[font=\sffamily\footnotesize,text=cgray,anchor=west] at (4.2,-1.84) {\texttt{import chatkit.tokens}};
+  \node[font=\sffamily\footnotesize,text=cgray,anchor=west] at (4.2,-2.3) {\texttt{import chatkit.costs}};
+\end{tikzpicture}
+\end{center}
+
+Here are the three small files. They are plain Python.
+
+\begin{pycode}
+# chatkit/tokens.py
+def rough_tokens(text):
+    """Very rough estimate: about 4 characters per token."""
+    return max(1, len(text) // 4)
+\end{pycode}
+\begin{pycode}
+# chatkit/costs.py
+from .tokens import rough_tokens      # relative import (same package)
+from chatkit import tokens            # absolute import (also fine)
+
+RATE_IN = 0.10  # USD per 1M input tokens (made up)
+
+def prompt_cost(text):
+    return rough_tokens(text) / 1e6 * RATE_IN
+
+def same_function():
+    return rough_tokens is tokens.rough_tokens
+\end{pycode}
+\begin{pycode}
+# main.py  (run from the chatapp folder)
+from chatkit import costs, tokens
+
+print(tokens.rough_tokens("Hello, how many tokens am I?"))
+print(f"{costs.prompt_cost('x' * 4000):.8f}")
+print(costs.same_function())
+\end{pycode}
+\begin{rawcode}
+7
+0.00010000
+True
+\end{rawcode}
+
+\begin{typecheck}
+\code{chatkit} is a package object, \code{chatkit.costs} is a module object inside it.
+Both have type \code{module}. \code{from chatkit import costs} works because \code{costs}
+is a submodule; \code{costs.prompt\_cost} is then a plain function.
+\end{typecheck}
+
+\begin{gamerule}[: be explicit in \texttt{\_\_init\_\_.py}]
+A one-line docstring is enough for an \code{\_\_init\_\_.py}. If you want users to write
+\code{from chatkit import prompt\_cost}, re-export it there with
+\code{from .costs import prompt\_cost}. Do not put heavy logic in it.
+\end{gamerule}
+
+% ------------------------------------------------------------
+\section{The module search path}
+
+Python looks for a module in the folders listed in \code{sys.path}, in order. The
+\textbf{first match wins}.
+
+\begin{pycode}
+import sys
+for place in sys.path:
+    print(repr(place))
+\end{pycode}
+\begin{rawcode}
+''
+'C:\\...\\Python312\\python312.zip'
+'C:\\...\\Python312\\DLLs'
+'C:\\...\\Python312\\Lib'
+'C:\\...\\Python312'
+'C:\\...\\ai-engineering\\.venv'
+'C:\\...\\ai-engineering\\.venv\\Lib\\site-packages'
+\end{rawcode}
+
+(Output from \code{python -c} in a project with a \code{.venv}; paths shortened.
+When you run a script file, the first entry is the script's folder instead of the empty string.)
+
+\begin{center}
+%%MD-BEGIN
+% ```mermaid
+% flowchart LR
+%     A["1. script folder / current dir"] --> B["2. standard library"]
+%     B --> C["3. .venv site-packages<br/>(pip installs go here)"]
+% ```
+%%MD-END
+\begin{tikzpicture}[node distance=7mm]
+  \node[pbox,draw=cblue,fill=cblue!10] (a) {1. your script's folder\\{\footnotesize (the empty string)}};
+  \node[pbox,right=of a] (b) {2. the standard library\\{\footnotesize \code{Lib}}};
+  \node[pbox,right=of b,draw=cgreen,fill=cgreen!10] (c) {3. installed packages\\{\footnotesize \code{.venv\textbackslash Lib\textbackslash site-packages}}};
+  \draw[parr] (a)--(b); \draw[parr] (b)--(c);
+  \node[font=\sffamily\scriptsize,text=cgray,below=2mm of b] {search goes left to right, stops at the first hit};
+\end{tikzpicture}
+\end{center}
+
+You can add a folder at run time, but prefer a proper install or running from the project root.
+
+\begin{pycode}
+import sys
+sys.path.insert(0, r"C:\my\modules")   # searched first
+\end{pycode}
+
+\begin{trap}
+\textbf{Shadowing.} A file in your folder with the same name as a library hides the library.
+Name a file \code{random.py} (or \code{json.py}, or, in an AI project, \code{anthropic.py}) and
+\code{import random} loads \emph{your} file.
+\begin{pycode}
+# random.py (yours)
+def choice(items):
+    return items[0]
+\end{pycode}
+\begin{pycode}
+# pick.py
+import random
+print(random.__file__)
+print(random.randint(1, 6))
+\end{pycode}
+\begin{rawcode}
+C:\...\shadow\random.py
+Traceback (most recent call last):
+  File "...\shadow\pick.py", line 3, in <module>
+    print(random.randint(1, 6))
+AttributeError: module 'random' has no attribute 'randint'
+\end{rawcode}
+Clue: the error says the \emph{module} lacks the name. Print \code{module.\_\_file\_\_} to see which
+file was really loaded, then rename your file.
+\end{trap}
+
+% ------------------------------------------------------------
+\section{Relative and absolute imports}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l >{\raggedright\arraybackslash}p{0.38\linewidth} >{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Style} & \textbf{Example} & \textbf{Meaning} \\
+\midrule
+absolute & \code{from chatkit import tokens} & start at a folder on \code{sys.path} \\
+relative, same folder & \code{from . import tokens} & start at the current package \\
+relative, same folder, one name & \code{from .tokens import rough\_tokens} & the same, picking one name \\
+relative, parent & \code{from .. import config} & one package up \\
+relative, sibling package & \code{from ..utils import clean} & up, then down into \code{utils} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Relative imports only work \emph{inside a package}. They need to know the parent package.
+That causes the most common beginner error:
+
+\begin{rawcode}
+> python chatkit\costs.py
+Traceback (most recent call last):
+  File "...\chatkit\costs.py", line 1, in <module>
+    from .tokens import rough_tokens
+ImportError: attempted relative import with no known parent package
+\end{rawcode}
+
+Run the module \emph{as part of its package} with \code{-m}, from the project root:
+
+\begin{rawcode}
+> python -m chatkit.costs
+running as a script, __name__ = __main__
+1.4999999999999999e-05
+\end{rawcode}
+
+(That ends with the two-line \code{if \_\_name\_\_ == "\_\_main\_\_":} block added to \code{costs.py}.)
+
+\begin{gamerule}
+In an application, prefer absolute imports (\code{from chatkit import tokens}); they read the
+same everywhere. Use relative imports for tight, internal links in a package you may rename
+or move. Run package code with \code{python -m package.module} from the project root.
+\end{gamerule}
+
+% ------------------------------------------------------------
+\section{Namespace packages}
+
+If a folder has \emph{no} \code{\_\_init\_\_.py}, Python can treat it as a \textbf{namespace package}.
+The useful trick: one package name can be spread across several folders on \code{sys.path}, and
+Python merges them. This lets separately shipped plug-ins share one name.
+
+\begin{center}
+%%MD-BEGIN
+% ```mermaid
+% flowchart LR
+%     subgraph core
+%       A["tools/search.py"]
+%     end
+%     subgraph extra
+%       B["tools/calculator.py"]
+%     end
+%     core --> N(("one package: tools"))
+%     extra --> N
+% ```
+%%MD-END
+\begin{tikzpicture}[node distance=8mm]
+  \node[pbox,draw=cblue,fill=cblue!10] (a) {\ttfamily core\textbackslash tools\textbackslash search.py};
+  \node[pbox,draw=cgold,fill=cgold!10,below=3mm of a] (b) {\ttfamily extra\textbackslash tools\textbackslash calculator.py};
+  \node[pbox,draw=cgreen,fill=cgreen!10,anchor=west] (n) at ($(b.east)+(12mm,3mm)$) {one package\\\ttfamily tools};
+  \draw[parr] (a.east)--(n.west); \draw[parr] (b.east)--(n.west);
+\end{tikzpicture}
+\end{center}
+
+\begin{pycode}
+# demo.py  (folders core/tools/search.py and extra/tools/calculator.py,
+#           no __init__.py anywhere)
+import sys
+sys.path.insert(0, "core")
+sys.path.insert(0, "extra")
+
+from tools import search, calculator    # two files, two folders, one name
+import tools
+print(type(tools), len(list(tools.__path__)), tools.__file__)
+\end{pycode}
+\begin{rawcode}
+<class 'module'> 2 None
+\end{rawcode}
+
+A namespace package has no single file (\code{\_\_file\_\_} is \code{None}) and its \code{\_\_path\_\_} lists
+all the folders. For your own small project, just use a normal package with \code{\_\_init\_\_.py}.
+
+% ------------------------------------------------------------
+\section{Modules versus objects}
+
+Modules and objects look alike: both give you \code{thing.name}. The difference is the number
+of copies.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
+\toprule
+ & \textbf{Module} & \textbf{Class / object} \\
+\midrule
+Copies in a program & exactly one (a \emph{singleton}) & as many instances as you create \\
+Hiding data & none; every name is public by convention & \code{\_name}, properties, methods \\
+Good for & shared constants, config, helper functions & many things with their own state \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{center}
+%%MD-BEGIN
+% ```mermaid
+% flowchart LR
+%     U1["user_a.py<br/>import settings"] --> S["ONE module object<br/>settings"]
+%     U2["main.py<br/>import settings"] --> S
+% ```
+%%MD-END
+\begin{tikzpicture}[node distance=10mm]
+  \node[pbox] (u1) {\ttfamily user\_a.py\\\footnotesize import settings};
+  \node[pbox,below=3mm of u1] (u2) {\ttfamily main.py\\\footnotesize import settings};
+  \node[pbox,draw=cgreen,fill=cgreen!10,anchor=west] (s) at ($(u1.east)+(15mm,-5mm)$) {ONE module object\\\ttfamily settings};
+  \draw[parr] (u1.east)--(s.west); \draw[parr] (u2.east)--(s.west);
+\end{tikzpicture}
+\end{center}
+
+\begin{pycode}
+# settings.py:   MODEL = "small"
+# user_a.py:     import settings
+#                def show(): return settings.MODEL
+import math
+import settings
+import user_a
+
+print(user_a.show())
+settings.MODEL = "large"        # change it in one place...
+print(user_a.show())            # ...every importer sees it
+print(settings is user_a.settings)
+
+math.pi = 3.0                   # legal! but only inside this process
+print(math.pi)
+\end{pycode}
+\begin{rawcode}
+small
+large
+True
+3.0
+\end{rawcode}
+
+Restarting Python restores \code{math.pi} to \code{3.141592653589793}. You changed the
+copy in memory, not the file on disk.
+
+\begin{trap}
+Because a module is shared, changing its variables is a hidden side effect for every
+other importer. Use module-level \emph{constants} freely. For state that varies per user or
+per conversation, make a class (Chapter~11) so each one gets its own instance.
+\end{trap}
+
+% ------------------------------------------------------------
+\section{Goodies in the standard library}
+
+``Batteries included'': before writing a helper, check whether the standard library has it.
+Five tools you will use constantly follow.
+
+\subsection{Missing keys: \texttt{setdefault} and \texttt{defaultdict}}
+
+\code{d[key]} on a missing key raises \code{KeyError}. \code{d.get(key, default)} returns a default
+but does not store it. \code{setdefault} returns the default \emph{and stores it}.
+
+\begin{pycode}
+usage = {"haiku": 3}
+print(usage.get("opus", 0))           # 0, dict unchanged
+print(usage)
+print(usage.setdefault("opus", 0))    # 0, and now stored
+print(usage)
+print(usage.setdefault("haiku", 99))  # key exists: old value wins
+\end{pycode}
+\begin{rawcode}
+0
+{'haiku': 3}
+0
+{'haiku': 3, 'opus': 0}
+3
+\end{rawcode}
+
+A \code{defaultdict} sets the default up front. Pass it a \emph{function with no arguments}
+(a ``factory''); it is called when a key is missing. The factory is the \emph{function}, so
+write \code{list}, not \code{list()}.
+
+\begin{pycode}
+from collections import defaultdict
+
+by_model = defaultdict(list)
+by_model["haiku"].append("hi")        # no KeyError: starts as []
+by_model["opus"].append("yo")
+by_model["haiku"].append("again")
+print(dict(by_model))
+
+tally = defaultdict(int)              # int() returns 0
+for m in ["haiku", "opus", "haiku"]:
+    tally[m] += 1
+print(tally)
+
+plain = {}
+try:
+    plain["haiku"] += 1               # a normal dict has no default
+except KeyError as e:
+    print("KeyError:", e)
+\end{pycode}
+\begin{rawcode}
+{'haiku': ['hi', 'again'], 'opus': ['yo']}
+defaultdict(<class 'int'>, {'haiku': 2, 'opus': 1})
+KeyError: 'haiku'
+\end{rawcode}
+
+\begin{typecheck}
+\code{defaultdict} is a subclass of \code{dict}. The argument is a \textbf{callable} that takes no
+arguments: \code{int} gives \code{0}, \code{list} gives \code{[]}, \code{dict} gives \code{\{\}}, and
+\code{lambda: "n/a"} gives any value you like. With no argument it behaves like a normal dict.
+\end{typecheck}
+
+\begin{trap}
+Reading a missing key in a \code{defaultdict} \emph{creates} it. After
+\code{by\_model["ghost"]}, the test \code{"ghost" in by\_model} is \code{True}. Use \code{.get()} when you only want to look.
+\end{trap}
+
+\subsection{Counting: \texttt{Counter}}
+
+\begin{pycode}
+from collections import Counter
+
+words = "the cat saw the dog and the cat ran".split()
+c = Counter(words)
+print(c)
+print(c.most_common(2))     # top two, as (item, count) tuples
+print(c["unicorn"])         # missing -> 0, no KeyError
+\end{pycode}
+\begin{rawcode}
+Counter({'the': 3, 'cat': 2, 'saw': 1, 'dog': 1, 'and': 1, 'ran': 1})
+[('the', 3), ('cat', 2)]
+0
+\end{rawcode}
+
+Counters combine with operators, like sets of items with counts.
+
+\begin{center}
+\begin{tabular}{@{}l l l@{}}
+\toprule
+\textbf{Operator} & \textbf{Meaning} & \textbf{\code{a = x:2, y:1}, \code{b = x:1, z:1}} \\
+\midrule
+\code{a + b} & add counts & \code{x:3, y:1, z:1} \\
+\code{a - b} & subtract, drop zero and negative & \code{x:1, y:1} \\
+\code{a \& b} & lower count of common items & \code{x:1} \\
+\code{a | b} & higher count of any item & \code{x:2, y:1, z:1} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{pycode}
+a = Counter(["x", "x", "y"])
+b = Counter(["x", "z"])
+print(a + b, a - b, a & b, a | b, sep="\n")
+print(isinstance(c, dict))
+\end{pycode}
+\begin{rawcode}
+Counter({'x': 3, 'y': 1, 'z': 1})
+Counter({'x': 1, 'y': 1})
+Counter({'x': 1})
+Counter({'x': 2, 'y': 1, 'z': 1})
+True
+\end{rawcode}
+
+\subsection{\texttt{OrderedDict}: mostly history}
+
+Since Python 3.7 a normal \code{dict} remembers insertion order, so you rarely need
+\code{OrderedDict}. Two differences remain: it compares order too, and it has
+\code{move\_to\_end}.
+
+\begin{pycode}
+from collections import OrderedDict
+
+d1 = {"a": 1, "b": 2}
+d2 = {"b": 2, "a": 1}
+print(d1 == d2)                                  # order ignored
+print(OrderedDict(d1) == OrderedDict(d2))        # order matters
+od = OrderedDict(a=1, b=2, c=3)
+od.move_to_end("a")
+print(list(od))
+\end{pycode}
+\begin{rawcode}
+True
+False
+['b', 'c', 'a']
+\end{rawcode}
+
+\subsection{Stack, queue, and \texttt{deque}}
+
+A \textbf{stack} is last-in, first-out (a pile of plates). A \textbf{queue} is first-in,
+first-out (a line). A \code{deque} (``deck'', double-ended queue) is fast at both ends, so it
+can be either. A \code{list} is slow when you remove from the front.
+
+Its best feature for chat apps is \code{maxlen}: old items fall off automatically, a ready-made
+sliding window of recent messages.
+
+\begin{center}
+%%MD-BEGIN
+% ```text
+%  appendleft -> [ t2 | t3 | t4 ] <- append        deque(maxlen=3)
+%  popleft   <-                   -> pop
+%  append("t5") pushes t2 out the left side: [ t3 | t4 | t5 ]
+% ```
+%%MD-END
+\begin{tikzpicture}
+  \foreach \i/\nm in {0/t2,1/t3,2/t4}{
+    \node[pbox,minimum width=11mm,draw=cblue,fill=cblue!10] at (\i*1.2,0) {\ttfamily\nm};}
+  \node[pbox,minimum width=11mm,draw=cgreen,fill=cgreen!10] (n) at (4.4,0) {\ttfamily t5};
+  \draw[parr] (n.west)--node[above,font=\scriptsize\sffamily]{append}(2.7,0);
+  \node[pbox,minimum width=11mm,draw=cred,fill=cred!10,dashed] (o) at (-1.6,0) {\ttfamily t2};
+  \draw[parr,cred] (-0.7,0)--node[above,font=\scriptsize\sffamily,text=cred]{dropped}(o.east);
+  \node[font=\sffamily\footnotesize,text=cgray] at (1.2,-0.9) {\texttt{deque(maxlen=3)} keeps only the newest 3};
+\end{tikzpicture}
+\end{center}
+
+\begin{pycode}
+from collections import deque
+
+history = deque(maxlen=3)
+for turn in ["t1", "t2", "t3", "t4"]:
+    history.append(turn)           # t1 falls off when t4 arrives
+print(history)
+history.appendleft("t0")           # t4 falls off the right instead
+print(history)
+print(history.popleft(), history.pop(), history)
+\end{pycode}
+\begin{rawcode}
+deque(['t2', 't3', 't4'], maxlen=3)
+deque(['t0', 't2', 't3'], maxlen=3)
+t0 t3 deque(['t2'], maxlen=3)
+\end{rawcode}
+
+\subsection{\texttt{itertools}: loops without the loop code}
+
+Each function returns an \textbf{iterator}: it produces one item at a time and remembers
+where it is. Wrap in \code{list(...)} to see everything. Never call \code{list()} on an infinite
+one such as \code{cycle}.
+
+\begin{pycode}
+import itertools
+
+print(list(itertools.chain([1, 2], ["a"])))             # one long sequence
+print(list(itertools.islice(itertools.cycle("ab"), 5))) # cap an endless one
+print(list(itertools.accumulate([10, 20, 5])))          # running total
+print(list(itertools.accumulate([1, 2, 3, 4], lambda a, b: a * b)))
+print(list(itertools.batched(range(7), 3)))             # Python 3.12+
+print(list(itertools.combinations("abc", 2)))
+print(list(itertools.product("ab", [1, 2])))
+\end{pycode}
+\begin{rawcode}
+[1, 2, 'a']
+['a', 'b', 'a', 'b', 'a']
+[10, 30, 35]
+[1, 2, 6, 24]
+[(0, 1, 2), (3, 4, 5), (6,)]
+[('a', 'b'), ('a', 'c'), ('b', 'c')]
+[('a', 1), ('a', 2), ('b', 1), ('b', 2)]
+\end{rawcode}
+
+\code{batched} is handy for sending documents to an API in chunks of $n$. It exists from Python
+3.12, so older interpreters will not have it.
+
+\subsection{\texttt{random}}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+\textbf{Call} & \textbf{Returns} \\
+\midrule
+\code{choice(seq)} & one item from a sequence \\
+\code{sample(seq, k)} & \code{k} different items (no repeats of the same position) \\
+\code{randint(a, b)} & integer, \textbf{both ends included} \\
+\code{randrange(a, b, step)} & like \code{range}: \code{b} is excluded \\
+\code{random()} & float in $[0.0, 1.0)$ \\
+\code{shuffle(list)} & shuffles the list \emph{in place}, returns \code{None} \\
+\code{seed(n)} & makes the sequence repeatable \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{pycode}
+import random
+
+random.seed(7)
+first = random.choice(["a", "b", "c"])
+random.seed(7)                       # same seed ...
+second = random.choice(["a", "b", "c"])
+print(first == second)               # ... same result
+print(random.randint(1, 6) in range(1, 7))
+\end{pycode}
+\begin{rawcode}
+True
+True
+\end{rawcode}
+
+\begin{gamerule}
+Seed the generator in tests and experiments (for example when sampling an evaluation set),
+so a run can be reproduced. \code{random} is not secure; for tokens or secrets use the
+\code{secrets} module.
+\end{gamerule}
+
+% ------------------------------------------------------------
+\section{More batteries: third-party code}
+
+When the standard library is not enough, look on \textbf{PyPI} (the Python Package Index; what
+\code{pip} searches), on GitHub, and on Read the Docs for documentation. The \code{anthropic}
+SDK you use is one such package. Before installing an unknown one, check the maintainer,
+the release date, the download count and the source repository. Installation is the topic of
+Chapter~13.
+
+\begin{boss}[: why did \texttt{import} give me the wrong thing?]
+Three facts explain nearly every import bug: (1) Python searches \code{sys.path} in order and
+takes the \textbf{first} match; (2) the result is cached in \code{sys.modules}, so the file runs
+only once; (3) the first entry of \code{sys.path} is your script's folder, so your own files can
+hide library modules. When an import misbehaves, print \code{module.\_\_file\_\_} and
+\code{sys.path[:3]}. If the path is not what you expect, you have a shadowing or a working-directory
+problem, not a bug in the library.
+\end{boss}
+
+\begin{practice}
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+\item Create \code{tokens.py} with a function \code{count(text)} that returns the number of
+  words. Import it in four ways (module, alias, one name, one name with alias) and call it each time.
+\item You run \code{python app.py} and get \code{AttributeError: module 'json' has no attribute 'loads'}.
+  What do you check first, and with which line of code?
+\item Why does \code{python helpers/util.py} fail on \code{from . import config}, and what command fixes it?
+\item Write a loop that counts how many times each \code{stop\_reason} string appears in a list,
+  once with \code{defaultdict(int)} and once with \code{Counter}.
+\item Keep only the last 5 messages of a chat using one data structure. Which one, and why not a list?
+\item Use \code{itertools.batched} to split 10 file names into groups of 4. What does the last group look like?
+\end{enumerate}
+\end{practice}
+
+\begin{achievement}{Module Mapper}
+\begin{itemize}[leftmargin=*,itemsep=1pt]
+\item Split a program into modules and a package, and import from it four ways.
+\item Explain how Python finds a module and why a file called \code{random.py} breaks things.
+\item Choose \code{defaultdict}, \code{Counter} or \code{deque} instead of hand-written loops.
+\item Run package code with \code{python -m}, and know why relative imports need it.
+\end{itemize}
+\end{achievement}
+
+%%MD-BEGIN
+% **Related:** [[10 - Functions]] (what is inside a module), [[11 - Objects]] (module vs class), [[13 - Development Environment]] (pip, venv), [[15 - Testing]] (importing code under test), [[16 - Debugging]] (print `__file__`).
+%%MD-END

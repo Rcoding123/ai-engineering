@@ -1,0 +1,498 @@
+% ============================================================
+%  Introducing Python, chapter 1: Introduction
+% ============================================================
+\chapter{Introduction}
+
+This chapter shows what a Python program looks like, how to install Python, and
+how to run code in two ways: typed line by line, or saved in a file. It ends with
+a realistic script that reads JSON, the data format almost every AI API speaks.
+You do not need to understand every line yet. You need to see the shape of the thing.
+
+% ------------------------------------------------------------
+\section{Mysteries}
+
+A knitting pattern and a cooking recipe both look like nonsense to an outsider.
+Yet both are \emph{little languages}: short vocabularies, strict rules, steps in order.
+A program is the same kind of thing, written for a computer. The table maps the parts
+of a recipe to the parts of a Python program.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X X@{}}
+\toprule
+\textbf{Feature} & \textbf{In a recipe} & \textbf{In Python} \\
+\midrule
+Vocabulary & ``fold'', ``sift'', abbreviations & keywords and names: \code{for}, \code{print} \\
+Syntax & what may be written, and where & the grammar rules of the language \\
+Sequence & steps run top to bottom & statements run top to bottom \\
+Loop & ``repeat for each ball'' & \code{for} and \code{while} \\
+Call another recipe & ``see the dough recipe'' & a \textbf{function} call \\
+Assumed context & you know what an oven is & the standard library, the OS \\
+Data & flour, potatoes & values: numbers, text, lists \\
+Tools & bowl, pan & the interpreter, an editor, a terminal \\
+Result & dinner & output, a file, a changed value \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{keyidea}[: programming is learnable]
+Programming is mostly learning a small vocabulary and a few rules. Python keeps both
+small, which is one reason it dominates data science and AI work.
+\end{keyidea}
+
+% ------------------------------------------------------------
+\section{Little Python Programs}
+
+Python is a general-purpose language created by Guido van Rossum in 1991. It is
+designed to be easy to read, it runs tiny scripts and huge systems, and it is the main
+language of modern machine learning. Three small programs show most of its flavor.
+
+\subsection{A loop}
+
+\begin{pycode}
+# file: loop1.py
+for step in 3, 2, 1, "go":
+    print(step)
+\end{pycode}
+\begin{rawcode}
+3
+2
+1
+go
+\end{rawcode}
+
+\code{for} takes each value in turn, puts it in the name \code{step}, and runs the
+indented line. Notice that the values are mixed: numbers and text. Python does not mind.
+
+\subsection{A list: values by position}
+
+A \textbf{list} keeps values in order inside square brackets. You reach one by its
+\textbf{offset}: the distance from the start. The first item is at offset 0.
+
+\begin{pycode}
+models = ["haiku", "sonnet", "opus"]
+print(models[1])
+\end{pycode}
+
+%MD
+%```text
+%  offset:     0         1          2
+%           +---------+----------+--------+
+%  models = | "haiku" | "sonnet" | "opus" |
+%           +---------+----------+--------+
+%  offset:    -3        -2         -1
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\ttfamily\small]
+  \foreach \k/\v in {0/haiku,1/sonnet,2/opus} {
+    \node[draw=cblue,fill=cblue!8,minimum width=2.3cm,minimum height=8mm] at (2.6*\k,0) {"\v"};
+    \node[font=\sffamily\scriptsize,text=cgreen] at (2.6*\k,0.75) {offset \k};
+  }
+  \node[font=\sffamily\scriptsize,text=cred] at (0,-0.75) {offset -3};
+  \node[font=\sffamily\scriptsize,text=cred] at (2.6,-0.75) {offset -2};
+  \node[font=\sffamily\scriptsize,text=cred] at (5.2,-0.75) {offset -1};
+  \node[anchor=east] at (-1.3,0) {models =};
+\end{tikzpicture}
+\end{center}
+
+The output of the program above is \code{sonnet}: offset 1 is the \emph{second} item.
+Think in offsets, not positions.
+
+\subsection{A dictionary: values by name}
+
+A \textbf{dictionary} stores \emph{key}: \emph{value} pairs in curly braces. You look a
+value up by its key instead of by a number.
+
+\begin{pycode}
+context_limit = {"small": 8_000, "medium": 32_000, "large": 128_000}
+size = "medium"
+print(size, "allows", context_limit[size], "tokens")
+\end{pycode}
+
+(The numbers are invented for the demo.) Output: \code{medium allows 32000 tokens}.
+
+%MD
+%```mermaid
+%flowchart LR
+%    K1["'small'"] --> V1["8000"]
+%    K2["'medium'"] --> V2["32000"]
+%    K3["'large'"] --> V3["128000"]
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\ttfamily\small,k/.style={draw=cgold,fill=cgold!10,minimum width=2cm,minimum height=7mm},
+  v/.style={draw=cgreen,fill=cgreen!10,minimum width=2cm,minimum height=7mm}]
+  \foreach \i/\a/\b in {0/small/8000,1/medium/32000,2/large/128000} {
+    \node[k] (k\i) at (0,-0.9*\i) {"\a"};
+    \node[v] (v\i) at (4,-0.9*\i) {\b};
+    \draw[->,thick,cgray] (k\i) -- (v\i);
+  }
+  \node[font=\sffamily\scriptsize,text=cgray] at (0,0.7) {keys};
+  \node[font=\sffamily\scriptsize,text=cgray] at (4,0.7) {values};
+\end{tikzpicture}
+\end{center}
+
+\begin{typecheck}[: square brackets do three different jobs]
+\begin{center}
+\begin{tabular}{@{}l l l@{}}
+\toprule
+\textbf{You write} & \textbf{What it is} & \textbf{You get} \\
+\midrule
+\code{["a", "b"]} & list literal & a \code{list} \\
+\code{models[1]} & subscript with an int offset & one item from the list \\
+\code{context\_limit["small"]} & subscript with a key & one value from the dict \\
+\bottomrule
+\end{tabular}
+\end{center}
+\medskip
+Using the wrong thing fails loudly:
+\begin{pycode}
+>>> models = ["haiku", "sonnet", "opus"]
+>>> models[3]
+Traceback (most recent call last):
+  ...
+IndexError: list index out of range
+>>> {"small": 8_000}["tiny"]
+Traceback (most recent call last):
+  ...
+KeyError: 'tiny'
+\end{pycode}
+\end{typecheck}
+
+% ------------------------------------------------------------
+\section{Setup}
+
+To write Python you need two tools: a \textbf{terminal} (a window where you type
+commands) and a \textbf{text editor} (plain text, not a word processor). Windows,
+macOS and Linux all have both. IDEs such as VS Code bundle them; they come in a
+later chapter.
+
+\begin{trap}
+Never write code in Word or similar. They swap straight quotes for curly ones
+and add formatting. Python then fails with a confusing \code{SyntaxError}. Use a code editor.
+\end{trap}
+
+\subsection{Install Python}
+
+Download the latest release from \code{python.org} (Downloads, then your platform)
+and follow the installer. On Windows, tick the option that adds Python to \code{PATH}.
+The computer may already have an old Python; install a current one anyway.
+
+\subsection{Upgrade Python}
+
+Versions are numbered \textbf{x.y.z}: a major number, a minor number, a bug-fix number.
+Python 3 has been the major version for years and no Python 4 is planned. A new
+minor version (3.12, 3.13, \ldots) arrives about once a year. Check yours:
+
+\begin{rawcode}
+$ python -V
+Python 3.12.10
+\end{rawcode}
+
+On Windows the launcher may be \code{py -V}. This series uses Python 3.12. Newer minor
+versions add features; code written for 3.12 normally runs on later ones.
+
+\subsection{Run Python programs}
+
+%MD
+%```mermaid
+%flowchart LR
+%    T[terminal] -->|"python"| R["REPL: type a line, see the result"]
+%    T -->|"python hello.py"| F["run the whole file, then exit"]
+%    E[editor] -->|save| H[hello.py]
+%    H --> F
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\sffamily\small,n/.style={draw=cblue,fill=cblue!8,rounded corners=2pt,inner sep=5pt},
+  >=Stealth]
+  \node[n] (t) at (0,0) {terminal};
+  \node[n,fill=cgreen!10,draw=cgreen,align=center] (r) at (5.2,0.9) {interactive interpreter (REPL)\\[-1pt]{\scriptsize one line at a time}};
+  \node[n,fill=cgold!10,draw=cgold,align=center] (f) at (5.2,-0.9) {run a file\\[-1pt]{\scriptsize whole program, then exit}};
+  \node[n,draw=cgray,fill=cgray!8] (h) at (0,-1.8) {editor: hello.py};
+  \draw[->,thick] (t) -- node[above,sloped,font=\ttfamily\scriptsize]{python} (r);
+  \draw[->,thick] (t) -- node[below,sloped,font=\ttfamily\scriptsize]{python hello.py} (f);
+  \draw[->,thick,cgray] (h) -- (f);
+\end{tikzpicture}
+\end{center}
+
+\textbf{Interactive interpreter.} Type \code{python} alone. You get a prompt
+\code{>{}>{}>}. Type one line of Python, press Enter, see the result at once. This is the
+fastest way to test an idea.
+
+\textbf{A file.} Save code in a file ending in \code{.py}, then run
+\code{python hello.py}. Use files for anything longer than a few lines.
+
+One difference surprises beginners. The interpreter \emph{echoes} the value of an
+expression. A file does not. In a file you must call \code{print()}.
+
+\begin{pycode}
+>>> 6 * 7
+42
+>>> print(6 * 7)
+42
+>>> "hi"
+'hi'
+>>> print("hi")
+hi
+\end{pycode}
+
+Note the quotes: the echo shows the value with quotes (a \emph{representation}),
+while \code{print()} shows the text for humans.
+
+\begin{typecheck}[: \texttt{print()} returns nothing]
+\code{print()} displays text and returns \code{None}. If you write
+\code{x = print("hi")}, then \code{x} is \code{None}, not the text. Use \code{print}
+to show, not to produce a value.
+\end{typecheck}
+
+% ------------------------------------------------------------
+\section{Built-In Python Features}
+
+Where does code come from? Three layers, each wider than the last.
+
+%MD
+%```mermaid
+%flowchart TB
+%    A["Built-ins: print, len, int, str ... always there"] --> B["Standard library: json, math, pathlib ... installed with Python, use import"]
+%    B --> C["Third-party packages: anthropic, openai, requests ... pip install, then import"]
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\sffamily\small]
+  \draw[cgray,fill=cpurple!8,rounded corners=3pt] (0,0) rectangle (11,3.1);
+  \draw[cgray,fill=cteal!10,rounded corners=3pt] (0.3,0.3) rectangle (7.4,2.3);
+  \draw[cgray,fill=cgold!15,rounded corners=3pt] (0.6,0.6) rectangle (4.0,1.5);
+  \node[align=center] at (2.3,1.05) {\textbf{built-ins}\\[-1pt]{\scriptsize\ttfamily print, len, int}};
+  \node[align=center] at (5.7,1.4) {\textbf{standard library}\\[-1pt]{\scriptsize\ttfamily json, math, pathlib}\\[-1pt]{\scriptsize import it}};
+  \node[align=center] at (9.2,1.55) {\textbf{third party}\\[-1pt]{\scriptsize\ttfamily anthropic, openai}\\[-1pt]{\scriptsize pip install, then import}};
+\end{tikzpicture}
+\end{center}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X X@{}}
+\toprule
+\textbf{Layer} & \textbf{How you get it} & \textbf{Example} \\
+\midrule
+Built-ins & nothing to do & \code{len("abc")} \\
+Standard library & \code{import name} & \code{import math} \\
+Third-party packages & \code{pip install name}, then import & \code{import anthropic} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{pycode}
+>>> import math
+>>> math.sqrt(16)
+4.0
+>>> from json import dumps
+>>> dumps({"ok": True})
+'{"ok": true}'
+\end{pycode}
+
+Installing third-party packages is done in a terminal, ideally inside a virtual
+environment (a private folder of packages per project):
+
+\begin{rawcode}
+$ pip install anthropic
+\end{rawcode}
+
+(\code{anthropic} is a third-party package; it is not needed to read this chapter.)
+
+\begin{gamerule}
+One virtual environment per project. Never install project packages into the
+system Python. It keeps versions from clashing.
+\end{gamerule}
+
+% ------------------------------------------------------------
+\section{A Bigger Example}
+
+Here is a short script that does real work: it takes the JSON text an AI API might
+send back, turns it into Python data, and pulls out two facts. It uses an import, a
+multi-line string, a function call, nested lookups, an f-string and error handling.
+(The JSON is canned, so the script runs offline.)
+
+\begin{pycode}
+# file: reply.py
+import json
+
+raw = """{
+  "model": "demo-1",
+  "usage": {"input": 12, "output": 40},
+  "reply": {"text": "Hi there"}
+}"""
+
+data = json.loads(raw)
+try:
+    text = data["reply"]["text"]
+    total = data["usage"]["input"] + data["usage"]["output"]
+    print(f"{data['model']} said {text!r} using {total} tokens")
+except KeyError as err:
+    print("missing key:", err)
+\end{pycode}
+\begin{rawcode}
+demo-1 said 'Hi there' using 52 tokens
+\end{rawcode}
+
+What each part does:
+
+\begin{enumerate}[itemsep=1pt]
+\item \code{import json}: make the standard-library JSON module available.
+\item The triple-quoted string \code{raw} holds JSON \emph{text}. It is a \code{str}.
+\item \code{json.loads(raw)} parses text into Python data. Here you get a \code{dict}.
+\item \code{try:} run the indented block. If a key is missing, jump to \code{except}.
+\item \code{data["reply"]["text"]} follows two layers of dictionaries.
+\item The f-string \code{f"..."} inserts values inside curly braces.
+\item \code{except KeyError as err} runs only if a key was absent; \code{err} holds the key.
+\end{enumerate}
+
+%MD
+%```mermaid
+%flowchart TD
+%    D["data (dict)"] --> M["'model' -> 'demo-1'"]
+%    D --> U["'usage' (dict)"]
+%    D --> R["'reply' (dict)"]
+%    U --> UI["'input' -> 12"]
+%    U --> UO["'output' -> 40"]
+%    R --> RT["'text' -> 'Hi there'"]
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\ttfamily\scriptsize,
+  d/.style={draw=cblue,fill=cblue!8,rounded corners=2pt,inner sep=3pt},
+  l/.style={draw=cgreen,fill=cgreen!10,rounded corners=2pt,inner sep=3pt},
+  >=Stealth]
+  \node[d] (r) at (5,0) {data (dict)};
+  \node[l] (m) at (0.3,-1.4) {"model": "demo-1"};
+  \node[d] (u) at (5,-1.4) {"usage" (dict)};
+  \node[d] (p) at (9.6,-1.4) {"reply" (dict)};
+  \node[l] (i) at (3.4,-2.8) {"input": 12};
+  \node[l] (o) at (6.6,-2.8) {"output": 40};
+  \node[l] (t) at (9.6,-2.8) {"text": "Hi there"};
+  \foreach \a/\b in {r/m,r/u,r/p,u/i,u/o,p/t} \draw[->,thick,cgray] (\a) -- (\b);
+\end{tikzpicture}
+\end{center}
+
+If the key is missing, the script reports it instead of crashing:
+
+\begin{pycode}
+>>> import json
+>>> data = json.loads('{"model": "demo-1"}')
+>>> try:
+...     data["reply"]["text"]
+... except KeyError as err:
+...     print("missing key:", err)
+...
+missing key: 'reply'
+\end{pycode}
+
+%MD
+%```mermaid
+%flowchart TD
+%    S[start try block] --> Q{"every key present?"}
+%    Q -->|yes| OK["run all lines, skip except"]
+%    Q -->|"no: KeyError"| EX["jump to except block"]
+%    OK --> END[continue after]
+%    EX --> END
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\sffamily\small,n/.style={draw=cblue,fill=cblue!8,rounded corners=2pt,inner sep=4pt},>=Stealth]
+  \node[n] (s) at (0,0) {enter \code{try}};
+  \node[n,rounded corners=9pt,draw=cgold,fill=cgold!10] (q) at (4,0) {key present?};
+  \node[n,draw=cgreen,fill=cgreen!10] (ok) at (8,0.8) {run all lines};
+  \node[n,draw=cred,fill=cred!8] (ex) at (8,-0.8) {jump to \code{except}};
+  \node[n,draw=cgray,fill=cgray!8] (e) at (11.2,0) {carry on};
+  \draw[->,thick] (s) -- (q);
+  \draw[->,thick,cgreen] (q) -- node[above,sloped,font=\scriptsize]{yes} (ok);
+  \draw[->,thick,cred] (q) -- node[below,sloped,font=\scriptsize]{no} (ex);
+  \draw[->,thick] (ok) -- (e);
+  \draw[->,thick] (ex) -- (e);
+\end{tikzpicture}
+\end{center}
+
+\begin{keyidea}[: indentation is syntax]
+Many languages mark blocks with braces. Python uses \textbf{indentation}. The lines
+indented under \code{try:} belong to it; the unindented line ends it. Use four spaces.
+Mixing tabs and spaces causes errors.
+\end{keyidea}
+
+\begin{trap}
+A bare \code{except:} (with no error type) hides every bug, even a typo.
+Name the error you expect: \code{except KeyError}.
+\end{trap}
+
+\begin{typecheck}[: what \texttt{json.loads} gives you]
+\begin{center}
+\begin{tabular}{@{}l l@{}}
+\toprule
+\textbf{JSON} & \textbf{Python} \\
+\midrule
+object \code{\{...\}} & \code{dict} \\
+array \code{[...]} & \code{list} \\
+string & \code{str} \\
+number & \code{int} or \code{float} \\
+\code{true} / \code{false} & \code{True} / \code{False} \\
+\code{null} & \code{None} \\
+\bottomrule
+\end{tabular}
+\end{center}
+\medskip
+A dict uses \emph{subscripts}: \code{data["model"]}, not \code{data.model}.
+Dot access (\code{obj.name}) is for objects such as SDK responses.
+\begin{pycode}
+>>> d = {"model": "demo-1"}
+>>> d["model"]
+'demo-1'
+>>> d.model
+Traceback (most recent call last):
+  ...
+AttributeError: 'dict' object has no attribute 'model'
+\end{pycode}
+\end{typecheck}
+
+\begin{boss}[: reading nested data]
+Chains of subscripts are read left to right; each one peels off one layer. Always
+know the type of the layer you are in: a list needs an \emph{int}, a dict needs a \emph{key}.
+\begin{pycode}
+>>> resp = {"choices": [{"message": {"text": "ok"}}]}
+>>> resp["choices"]
+[{'message': {'text': 'ok'}}]
+>>> resp["choices"][0]
+{'message': {'text': 'ok'}}
+>>> resp["choices"][0]["message"]
+{'text': 'ok'}
+>>> resp["choices"][0]["message"]["text"]
+'ok'
+\end{pycode}
+When one step fails, evaluate the chain one subscript at a time. The error shows
+which layer was not what you thought.
+\end{boss}
+
+% ------------------------------------------------------------
+\section{Review}
+
+You now know the shape of a Python program: names, values, lists, dictionaries,
+loops, imports, and indentation for blocks. You know two ways to run code and three
+places code comes from. Next chapter: what a variable really is.
+
+\begin{practice}
+\begin{enumerate}[itemsep=1pt]
+\item Why does \code{models[1]} on a three-item list give the \emph{second} item?
+\item What is the difference between what the interpreter echoes and what a file prints?
+\item Name the three sources of Python code and give one example of each.
+\item Which error do you get from a list offset that is too large? From a dict key that does not exist?
+\item In \code{r["a"][0]["b"]}, what type must \code{r}, \code{r["a"]} and \code{r["a"][0]} have?
+\item What marks the end of a \code{try} block in Python?
+\end{enumerate}
+\end{practice}
+
+\begin{achievement}{First Run}
+\begin{itemize}[itemsep=1pt]
+\item Read a short Python program: loop, list, dictionary, \code{try}/\code{except}.
+\item Check your Python version and start the interpreter.
+\item Run code interactively and from a \code{.py} file, and explain the echo difference.
+\item Tell built-ins, the standard library and third-party packages apart.
+\item Navigate nested list/dict data with chained subscripts.
+\end{itemize}
+\end{achievement}

@@ -1,0 +1,867 @@
+% ============================================================
+%  Introducing Python, chapter 4: Strings
+% ============================================================
+\chapter{Strings}
+
+Most programs spend more time on text than on math, and AI work is text work: prompts,
+model replies, file names, JSON. This chapter covers how to create strings, pick them apart
+with indexes and slices, search and clean them, and build new ones with f-strings. Everything here
+applies to prompts you will format and replies you will clean.
+
+% ------------------------------------------------------------
+\section{Strings Are Sequences}
+
+A \code{str} is an ordered \textbf{sequence} of characters. A character is the smallest unit of
+writing: a letter, digit, symbol, space or newline. Python has no separate character type.
+A single character is just a string of length 1, and a string may be empty.
+
+Strings are \textbf{immutable}: no operation edits a string in place. Every operation
+that seems to change one returns a \emph{new} string. This is the most important fact in the chapter.
+
+Every sequence (strings, and later lists and tuples) supports the same core operations:
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l l X@{}}
+\toprule
+\textbf{Operation} & \textbf{Example} & \textbf{Returns} & \textbf{Meaning} \\
+\midrule
+membership & \code{"fun" in s} & \code{bool} & is it present? \\
+position of a value & \code{s.index("x")} & \code{int} & offset of first match \\
+one element & \code{s[0]} & \code{str} (length 1) & item at an offset \\
+slice & \code{s[2:5]} & \code{str} & a range of items \\
+length & \code{len(s)} & \code{int} & number of items \\
+smallest, largest & \code{min(s)}, \code{max(s)} & \code{str} (length 1) & by character code \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{pycode}
+>>> prompt = "Summarize this text"
+>>> "text" in prompt
+True
+>>> prompt.index("this")
+10
+>>> prompt[0]
+'S'
+>>> prompt[10:14]
+'this'
+>>> len(prompt)
+19
+>>> min("model"), max("model")
+('d', 'o')
+\end{pycode}
+
+% ------------------------------------------------------------
+\section{Create with Quotes}
+
+Wrap characters in matching single or double quotes. Python treats both the same.
+The interpreter echoes strings with single quotes.
+
+\begin{pycode}
+>>> 'single' == "double"
+False
+>>> 'tokens' == "tokens"
+True
+>>> "It's fine"
+"It's fine"
+>>> 'She said "hi"'
+'She said "hi"'
+\end{pycode}
+
+Having two quote styles lets you put one kind of quote inside the other. Triple quotes
+(\code{'''} or \code{"""}) create \emph{multi-line} strings and keep the line breaks.
+That is the usual way to write a long prompt.
+
+\begin{pycode}
+>>> text = """line one
+... line two"""
+>>> text
+'line one\nline two'
+>>> print(text)
+line one
+line two
+\end{pycode}
+
+\paragraph{Echo versus print.} The interpreter echo shows the string's representation, with quotes and
+escape codes like \code{\textbackslash n}. \code{print()} shows the text itself, separates its arguments
+with spaces and ends with a newline.
+
+\begin{pycode}
+>>> print("a", "b", 3)
+a b 3
+>>> len(""), bool("")
+(0, False)
+\end{pycode}
+
+\paragraph{Prefixes.} A letter before the opening quote changes how the string is read.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+\textbf{Prefix} & \textbf{Kind} & \textbf{Use} \\
+\midrule
+none & plain text (\code{str}) & most strings \\
+\code{f} & f-string & insert values: \code{f"hi \{name\}"} \\
+\code{r} & raw string & keep backslashes literally (paths, regular expressions) \\
+\code{fr} & raw f-string & both \\
+\code{b} & \code{bytes}, not \code{str} & binary data (Chapter 5) \\
+\code{u} & same as plain & historical; you can ignore it \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\section{Create with str()}
+
+\code{str(x)} converts any object to its text form. \code{print()} and f-strings do this for you.
+\code{+} does \emph{not}: mixing \code{str} and \code{int} with \code{+} is a \code{TypeError}.
+
+\begin{pycode}
+>>> str(42), str(3.5), str(True), str(None)
+('42', '3.5', 'True', 'None')
+>>> str([1, 2])
+'[1, 2]'
+>>> "tokens: " + 42
+Traceback (most recent call last):
+  ...
+TypeError: can only concatenate str (not "int") to str
+>>> "tokens: " + str(42)
+'tokens: 42'
+\end{pycode}
+
+\section{Escape with \textbackslash}
+
+A backslash gives the next character a special meaning (an \textbf{escape sequence}), or
+removes its special meaning.
+
+\begin{center}
+\begin{tabular}{@{}l l@{}}
+\toprule
+\textbf{Write} & \textbf{You get} \\
+\midrule
+\code{\textbackslash n} & newline \\
+\code{\textbackslash t} & tab \\
+\code{\textbackslash \textbackslash} & one backslash \\
+\code{\textbackslash '} and \code{\textbackslash "} & a quote character \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{pycode}
+>>> "a\tb"
+'a\tb'
+>>> print("line1\nline2")
+line1
+line2
+>>> print('C:\\logs\\new')
+C:\logs\new
+\end{pycode}
+
+A \textbf{raw string} (\code{r"..."}) turns escapes off. It does not affect real line breaks inside triple quotes.
+
+\begin{pycode}
+>>> print(r"C:\logs\new")
+C:\logs\new
+>>> len(r"\n"), len("\n")
+(2, 1)
+\end{pycode}
+
+\begin{trap}
+On Windows a path like \code{"C:\textbackslash new"} contains a newline, because \code{\textbackslash n} is
+an escape. Use a raw string, double the backslashes, or use forward slashes.
+\begin{pycode}
+>>> print("C:\new")
+C:
+ew
+\end{pycode}
+\end{trap}
+
+\section{Combine with + and Duplicate with *}
+
+\code{+} joins two strings; \code{*} repeats a string by an \code{int}. Python adds no spaces.
+Two string \emph{literals} next to each other are joined automatically, which is handy for splitting
+a long string over several lines inside parentheses.
+
+\begin{pycode}
+>>> "ab" + "cd"
+'abcd'
+>>> "ab" "cd"
+'abcd'
+>>> "-" * 10
+'----------'
+>>> "ha" * 3 + "!"
+'hahaha!'
+>>> "5" + "5", "5" * 3
+('55', '555')
+>>> prompt = ("You are a helpful assistant. "
+...           "Answer in one sentence.")
+>>> prompt
+'You are a helpful assistant. Answer in one sentence.'
+\end{pycode}
+
+\code{*} binds tighter than \code{+}, so \code{"ha" * 3 + "!"} repeats first.
+
+% ------------------------------------------------------------
+\section{Get a Character by [offset]}
+
+Offsets start at 0 on the left. Negative offsets count from the right, so \code{-1} is the last character.
+
+%MD
+%```text
+%  word =   t    o    k    e    n    i    z    e
+%  offset:  0    1    2    3    4    5    6    7
+%  offset: -8   -7   -6   -5   -4   -3   -2   -1
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\ttfamily\small]
+  \foreach \q [count=\i from 0] in {t,o,k,e,n,i,z,e} {
+    \pgfmathtruncatemacro{\neg}{\i-8}
+    \node[draw=cblue,fill=cblue!8,minimum width=9mm,minimum height=9mm] at (1.0*\i,0) {\q};
+    \node[font=\sffamily\scriptsize,text=cgreen] at (1.0*\i,0.7) {\i};
+    \node[font=\sffamily\scriptsize,text=cred] at (1.0*\i,-0.7) {\neg};
+  }
+  \node[anchor=east,font=\sffamily\scriptsize,text=cgreen] at (-0.7,0.7) {offset};
+  \node[anchor=east,font=\sffamily\scriptsize,text=cred] at (-0.7,-0.7) {from the end};
+\end{tikzpicture}
+\end{center}
+
+\begin{pycode}
+>>> word = "tokenize"
+>>> word[0], word[3], word[-1], word[-2]
+('t', 'e', 'e', 'z')
+>>> word[8]
+Traceback (most recent call last):
+  ...
+IndexError: string index out of range
+\end{pycode}
+
+An offset past the end raises \code{IndexError}. You cannot assign to an offset, because strings are immutable.
+Build a new string instead:
+
+\begin{pycode}
+>>> word = "tokenize"
+>>> word[0] = "T"
+Traceback (most recent call last):
+  ...
+TypeError: 'str' object does not support item assignment
+>>> "T" + word[1:]
+'Tokenize'
+>>> word.replace("t", "T", 1)
+'Tokenize'
+>>> word
+'tokenize'
+\end{pycode}
+
+\begin{typecheck}[: what indexing returns]
+\code{s[i]} returns a \code{str} of length 1, never a separate char type. \code{s[i]} needs an
+\code{int}; a \code{str} offset such as \code{s["a"]} is a \code{TypeError}. Compare with a dict, where the subscript
+is a key, not a position.
+\end{typecheck}
+
+\section{Get a Substring with a Slice}
+
+\code{s[start:stop:step]} returns a new string. Think of the offsets as numbers on the
+\emph{lines between characters}. \code{start} is included; \code{stop} is excluded. Omitted parts
+default to the beginning, the end, and step 1.
+
+%MD
+%```text
+%   cut lines:  0   1   2   3   4   5   6   7   8   9   10
+%              +---+---+---+---+---+---+---+---+---+---+
+%   string:    | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
+%              +---+---+---+---+---+---+---+---+---+---+
+%                      \___________/
+%                        s[2:5] = "234"
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\ttfamily\small]
+  \foreach \i in {0,...,9} {
+    \ifnum\i>1 \ifnum\i<5 \def\fillc{cgold!45}\else\def\fillc{cblue!8}\fi\else\def\fillc{cblue!8}\fi
+    \node[draw=cblue,fill=\fillc,minimum width=9mm,minimum height=9mm] at (0.9*\i+0.45,0) {\i};
+  }
+  \foreach \k in {0,...,10} {
+    \draw[cgray] (0.9*\k,-0.5) -- (0.9*\k,-0.62);
+    \node[font=\sffamily\scriptsize,text=cgreen] at (0.9*\k,-0.85) {\k};
+  }
+  \draw[decorate,decoration={brace,amplitude=4pt},cgold!80!black] (1.8,0.55) -- (4.5,0.55);
+  \node[font=\sffamily\scriptsize,text=cgold!70!black] at (3.15,1.1) {\texttt{s[2:5]} gives \texttt{"234"}};
+\end{tikzpicture}
+\end{center}
+
+\begin{pycode}
+>>> d = "0123456789"
+>>> d[2:5], d[:3], d[7:], d[:]
+('234', '012', '789', '0123456789')
+>>> d[-3:], d[:-3], d[-5:-2]
+('789', '0123456', '567')
+>>> d[::2], d[1::2], d[2:9:3]
+('02468', '13579', '258')
+>>> d[::-1], d[8:2:-2]
+('9876543210', '864')
+\end{pycode}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+\textbf{Slice} & \textbf{Result for \code{d}} & \textbf{Reading it} \\
+\midrule
+\code{d[2:5]} & \code{'234'} & from cut 2 up to (not including) cut 5 \\
+\code{d[:3]} & \code{'012'} & first three characters \\
+\code{d[7:]} & \code{'789'} & from cut 7 to the end \\
+\code{d[-3:]} & \code{'789'} & last three characters \\
+\code{d[:-3]} & \code{'0123456'} & everything except the last three \\
+\code{d[::2]} & \code{'02468'} & every second character \\
+\code{d[::-1]} & \code{'9876543210'} & reversed \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Slices are forgiving. Out-of-range offsets are clamped instead of raising an error. A slice
+that selects nothing gives the empty string. Indexing (\code{d[10]}) is strict; slicing is not.
+
+\begin{pycode}
+>>> d = "0123456789"
+>>> d[-50:3], d[7:99], d[20:30], d[5:2]
+('012', '789', '', '')
+>>> d[10]
+Traceback (most recent call last):
+  ...
+IndexError: string index out of range
+\end{pycode}
+
+\begin{boss}[: slices and cut lines]
+Most slice mistakes come from counting characters instead of cut lines. Rules that always hold:
+\begin{itemize}[itemsep=1pt]
+\item \code{s[a:b]} has length \code{b - a} when both are in range.
+\item \code{s[:n] + s[n:] == s} for any \code{n}. The two halves meet at one cut.
+\item With a negative step, start and stop swap roles: you walk backward from \code{start} down to, but not including, \code{stop}.
+\item Prefer simple forms: \code{s[:n]}, \code{s[-n:]}, \code{s[::-1]}.
+\end{itemize}
+%MD
+%```mermaid
+%flowchart LR
+%    S["s[start:stop:step]"] --> A["start: first kept (included)"]
+%    S --> B["stop: first NOT kept (excluded)"]
+%    S --> C["step: stride, negative walks backward"]
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\sffamily\small,>=Stealth,
+  b/.style={draw=cblue,fill=cblue!8,rounded corners=2pt,inner sep=4pt,align=center}]
+  \node[font=\ttfamily\Large] (s) at (5,1.4) {s[start:stop:step]};
+  \node[b] (a) at (0.8,-0.4) {start\\[-2pt]{\scriptsize first one kept}};
+  \node[b] (b2) at (5,-0.4) {stop\\[-2pt]{\scriptsize first one NOT kept}};
+  \node[b] (c) at (9.4,-0.4) {step\\[-2pt]{\scriptsize negative: walk backward}};
+  \draw[->,thick,cgray] (s) -- (a);
+  \draw[->,thick,cgray] (s) -- (b2);
+  \draw[->,thick,cgray] (s) -- (c);
+\end{tikzpicture}
+\end{center}
+\begin{pycode}
+>>> d = "0123456789"
+>>> d[:4] + d[4:] == d
+True
+>>> len(d[3:8])
+5
+>>> d[:3] + "!" + d[-2:]
+'012!89'
+\end{pycode}
+\end{boss}
+
+\section{Get Length with len()}
+
+\code{len(s)} returns an \code{int}: the number of characters, including spaces and newlines.
+The last valid offset is \code{len(s) - 1}. (Token counts are not character counts; models read
+tokens, which are chunks of characters.)
+
+\begin{pycode}
+>>> len("hello world"), len("a\nb"), len("")
+(11, 3, 0)
+\end{pycode}
+
+% ------------------------------------------------------------
+\section{Methods: Functions That Belong to a String}
+
+Many string operations are \textbf{methods}, called with a dot: \code{s.method(args)}. The dot
+(attribute access) is different from the brackets used for indexing. A method \emph{never}
+changes \code{s}; it returns a result.
+
+\begin{typecheck}[: what the common methods return]
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+\textbf{Methods} & \textbf{Returns} & \textbf{Examples} \\
+\midrule
+transforming & new \code{str} & \code{upper lower strip replace title center} \\
+splitting & \code{list[str]} & \code{split splitlines} \\
+joining & new \code{str} & \code{sep.join(list)} \\
+counting, finding & \code{int} & \code{find index count} \\
+testing & \code{bool} & \code{startswith endswith isdigit isalpha isalnum} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{typecheck}
+
+\begin{trap}
+Forgetting to keep the result is the most common beginner bug with strings. Calling
+\code{name.upper()} alone computes a new string and throws it away. \code{name} is untouched.
+%MD
+%```mermaid
+%flowchart LR
+%    N1["name -> 'ada'"] -->|"name.upper()"| X["'ADA' (new object, no name)"]
+%    X -->|"name = ..."| N2["name -> 'ADA'"]
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\ttfamily\small,>=Stealth,
+  ob/.style={draw=cblue,fill=cblue!8,inner sep=4pt}]
+  \node[draw=cgold,fill=cgold!25,inner sep=3pt] (n) at (0,0) {name};
+  \node[ob] (a) at (3,0) {"ada"};
+  \draw[->,thick] (n) -- (a);
+  \node[ob,draw=cgreen,fill=cgreen!10] (b) at (7.2,0) {"ADA"};
+  \draw[->,thick,cgray] (a) -- node[above,font=\scriptsize]{name.upper()} node[below,font=\sffamily\scriptsize]{new object} (b);
+  \node[draw=cgold,fill=cgold!25,inner sep=3pt] (n2) at (10.5,0) {name};
+  \draw[->,thick,dashed,cgray] (n2) -- node[above,font=\sffamily\scriptsize]{only if} node[below,font=\scriptsize]{name = ...} (b);
+\end{tikzpicture}
+\end{center}
+\begin{pycode}
+>>> name = "ada"
+>>> name.upper()
+'ADA'
+>>> name
+'ada'
+>>> name = name.upper()
+>>> name
+'ADA'
+\end{pycode}
+\end{trap}
+
+\subsection{Split with split()}
+
+\code{s.split(sep)} cuts a string at each separator and returns a \code{list} of strings. With no
+argument it splits on any run of whitespace and drops empty pieces. A second argument limits the
+number of cuts.
+
+\begin{pycode}
+>>> line = "role:user,content:hello,tokens:5"
+>>> line.split(",")
+['role:user', 'content:hello', 'tokens:5']
+>>> line.split(",", 1)
+['role:user', 'content:hello,tokens:5']
+>>> "a  b\tc\nd".split()
+['a', 'b', 'c', 'd']
+>>> "a,,b".split(",")
+['a', '', 'b']
+>>> "".split(","), "".split()
+([''], [])
+>>> "a\nb\nc".splitlines()
+['a', 'b', 'c']
+\end{pycode}
+
+\subsection{Combine with join()}
+
+\code{join} is the reverse of \code{split}. It looks backward: the \emph{separator} is the object, and the
+list is the argument: \code{separator.join(list)}. All items must already be strings.
+
+%MD
+%```mermaid
+%flowchart LR
+%    A["'a,b,c'"] -->|"split(',')"| L["['a', 'b', 'c']"]
+%    L -->|"','.join(list)"| A
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\ttfamily\small,>=Stealth,
+  ob/.style={draw=cblue,fill=cblue!8,inner sep=4pt}]
+  \node[ob] (s) at (0,0) {"a,b,c"};
+  \foreach \q [count=\i from 0] in {a,b,c} \node[ob,draw=cgreen,fill=cgreen!10] (l\i) at (6.2+1.3*\i,0) {"\q"};
+  \node[font=\sffamily\scriptsize,text=cgray] at (7.5,0.7) {list of 3 strings};
+  \draw[->,thick,cgray] (1.4,0.15) -- node[above,font=\scriptsize]{.split(",")} (5.3,0.15);
+  \draw[->,thick,cgray] (5.3,-0.2) -- node[below,font=\scriptsize]{",".join(list)} (1.4,-0.2);
+\end{tikzpicture}
+\end{center}
+
+\begin{pycode}
+>>> ", ".join(["one", "two", "three"])
+'one, two, three'
+>>> "\n".join(["l1", "l2"])
+'l1\nl2'
+>>> ",".join([str(1), str(2)])
+'1,2'
+>>> ",".join([1, 2])
+Traceback (most recent call last):
+  ...
+TypeError: sequence item 0: expected str instance, int found
+\end{pycode}
+
+\begin{gamerule}
+To build one string from many pieces, collect the pieces in a list and call
+\code{"".join(pieces)} once. Do not grow a string with \code{+} inside a loop.
+\end{gamerule}
+
+\subsection{Substitute with replace()}
+
+\code{s.replace(old, new)} returns a copy with every occurrence replaced. A third argument limits the count.
+It matches raw text, so it can hit the middle of words.
+
+\begin{pycode}
+>>> s = "the cat sat on the mat"
+>>> s.replace("the", "a")
+'a cat sat on a mat'
+>>> s.replace("the", "a", 1)
+'a cat sat on the mat'
+>>> s.replace("at", "og")
+'the cog sog on the mog'
+>>> s
+'the cat sat on the mat'
+\end{pycode}
+
+For whole-word or pattern replacement you need regular expressions (Chapter 17).
+
+\subsection{Prefixes and suffixes}
+
+\begin{pycode}
+>>> f = "report_final.json"
+>>> f.startswith("report"), f.endswith(".json")
+(True, True)
+>>> f.startswith(("a", "r"))
+True
+>>> f.removesuffix(".json")
+'report_final'
+>>> f.removeprefix("report_")
+'final.json'
+>>> f.removeprefix("zzz")
+'report_final.json'
+\end{pycode}
+
+\code{startswith} and \code{endswith} accept a tuple of alternatives. \code{removeprefix} and \code{removesuffix}
+(Python 3.9+) do nothing if the text is absent. To add a prefix or suffix, use \code{+}.
+
+\subsection{Strip with strip()}
+
+\code{strip()} removes characters from the \emph{ends}. With no argument it removes whitespace
+(spaces, tabs, newlines). \code{lstrip()} works on the left end only, \code{rstrip()} on the right.
+Given an argument, it treats it as a \emph{set of characters}, not a substring.
+
+%MD
+%```text
+%  "  \n  Paris.  \n"
+%   ^^^^^^^       ^^^^   <- strip() removes these
+%  =>  "Paris."
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\ttfamily\small]
+  \foreach \q [count=\i from 0] in {{\textvisiblespace},{\textvisiblespace},{\textbackslash n},{\textvisiblespace},P,a,r,i,s,.,{\textvisiblespace},{\textvisiblespace},{\textbackslash n}} {
+    \ifnum\i<4 \def\fc{cred!15}\else\ifnum\i>9 \def\fc{cred!15}\else\def\fc{cgreen!15}\fi\fi
+    \node[draw=cgray,fill=\fc,minimum width=7mm,minimum height=8mm] at (0.75*\i,0) {\q};
+  }
+  \node[font=\sffamily\scriptsize,text=cred] at (1.1,-0.8) {removed};
+  \node[font=\sffamily\scriptsize,text=cred] at (7.1,-0.8) {removed};
+  \node[font=\sffamily\scriptsize,text=cgreen!60!black] at (4.1,-0.8) {kept: \texttt{"Paris."}};
+\end{tikzpicture}
+\end{center}
+
+\begin{pycode}
+>>> raw = "  \n  Paris.  \n"
+>>> raw.strip()
+'Paris.'
+>>> raw.lstrip()
+'Paris.  \n'
+>>> raw.rstrip()
+'  \n  Paris.'
+>>> "***hi***".strip("*")
+'hi'
+>>> "..ok?!".strip(".?!")
+'ok'
+>>> "xxabcxx".strip("xa")
+'bc'
+\end{pycode}
+
+A common job is cleaning a model reply that wraps JSON in a code fence:
+
+\begin{pycode}
+>>> reply = "```json\n{\"ok\": true}\n```"
+>>> reply.removeprefix("```json").removesuffix("```").strip()
+'{"ok": true}'
+\end{pycode}
+
+Chaining methods works because each one returns a new string for the next to use.
+
+\subsection{Search and select}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+\textbf{Call} & \textbf{Returns} & \textbf{If not found} \\
+\midrule
+\code{s.find(x)} & offset (\code{int}) of the first match & \code{-1} \\
+\code{s.rfind(x)} & offset of the last match & \code{-1} \\
+\code{s.index(x)}, \code{s.rindex(x)} & same offsets & raises \code{ValueError} \\
+\code{s.count(x)} & number of non-overlapping matches & \code{0} \\
+\code{x in s} & \code{True} or \code{False} & \code{False} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{pycode}
+>>> t = "to be or not to be"
+>>> t.find("be"), t.rfind("be"), t.find("zz")
+(3, 16, -1)
+>>> t.index("or")
+6
+>>> t.index("zz")
+Traceback (most recent call last):
+  ...
+ValueError: substring not found
+>>> t.count("to"), t.count("o")
+(2, 4)
+>>> t.isalnum(), "abc123".isalnum(), "12".isdigit(), "abc".isalpha()
+(False, True, True, True)
+\end{pycode}
+
+\begin{trap}
+\code{find} returns \code{-1} (truthy) when the text is missing and \code{0} (falsy) when it is at the start.
+So \code{if s.find("x"):} is wrong. To ask ``is it there?'', use \code{"x" in s}.
+\begin{pycode}
+>>> "abc".find("a"), bool("abc".find("a"))
+(0, False)
+>>> "abc".find("z"), bool("abc".find("z"))
+(-1, True)
+>>> "a" in "abc", "z" in "abc"
+(True, False)
+\end{pycode}
+\end{trap}
+
+\subsection{Change case}
+
+\begin{pycode}
+>>> m = "hello, World"
+>>> m.upper(), m.lower()
+('HELLO, WORLD', 'hello, world')
+>>> m.capitalize(), m.title(), m.swapcase()
+('Hello, world', 'Hello, World', 'HELLO, wORLD')
+>>> "Ab".lower() == "aB".lower()
+True
+\end{pycode}
+
+To compare text ignoring case, lowercase both sides first.
+
+\subsection{Set alignment}
+
+\code{center}, \code{ljust}, \code{rjust} pad a string to a total width; an optional second argument sets the pad character.
+\code{zfill} pads with zeros on the left.
+
+\begin{pycode}
+>>> "ok".center(10, "*")
+'****ok****'
+>>> "ok".ljust(6, ".") + "|"
+'ok....|'
+>>> "ok".rjust(6) + "|"
+'    ok|'
+>>> "7".zfill(3)
+'007'
+\end{pycode}
+
+% ------------------------------------------------------------
+\section{Apply Formatting}
+
+Building text from values is called \textbf{interpolation}. Python has three styles. Know all three
+so you can read old code, but write f-strings.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+\textbf{Style} & \textbf{Looks like} & \textbf{Notes} \\
+\midrule
+Old (\code{\%}) & \code{"\%s: \%d" \% (name, n)} & C-style; values go in a tuple after \code{\%} \\
+New (\code{.format}) & \code{"\{\}: \{\}".format(name, n)} & placeholders \code{\{\}}, \code{\{0\}}, \code{\{name\}} \\
+f-string & \code{f"\{name\}: \{n\}"} & Python 3.6+; any expression inside braces \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Old style: \%}
+
+The format is \code{template \% values}. A single value can go alone; several must be in a tuple.
+Each \code{\%} code has a type: \code{\%s} text (works for anything), \code{\%d} integer, \code{\%f} float,
+\code{\%x} hex, \code{\%e} exponent, \code{\%\%} a literal percent sign.
+
+\begin{pycode}
+>>> "%s has %d tokens" % ("prompt", 42)
+'prompt has 42 tokens'
+>>> "%.2f" % 3.14159
+'3.14'
+>>> "%5d|%-5d|" % (7, 7)
+'    7|7    |'
+>>> "%d%%" % 95
+'95%'
+>>> "%x" % 255
+'ff'
+\end{pycode}
+
+\subsection{New style: format()}
+
+\begin{pycode}
+>>> "{} has {} tokens".format("prompt", 42)
+'prompt has 42 tokens'
+>>> "{1} before {0}".format("a", "b")
+'b before a'
+>>> "{name} costs {cost:.2f}".format(name="draft", cost=1.5)
+'draft costs 1.50'
+>>> "{0[model]}".format({"model": "demo-1"})
+'demo-1'
+\end{pycode}
+
+\subsection{Newest style: f-strings}
+
+Put \code{f} before the quote and write values or whole expressions inside braces.
+
+\begin{pycode}
+>>> model, n = "demo-1", 1234567
+>>> f"{model} saw {n} tokens"
+'demo-1 saw 1234567 tokens'
+>>> f"{model.upper()} has {len(model)} characters"
+'DEMO-1 has 6 characters'
+\end{pycode}
+
+After a colon comes a \textbf{format spec}, a tiny language shared by \code{format()} and f-strings.
+Its parts, in order, are all optional:
+
+%MD
+%```text
+%  f"{x:*>10,.2f}"      with x = 1234.5
+%      | | | |  | |
+%      | | | |  | +-- type: f float, d int, s str, x hex, b binary, % percent
+%      | | | |  +---- precision: .2 = two decimals
+%      | | | +------- thousands separator: , or _
+%      | | +--------- width: at least 10 characters
+%      | +----------- align: < left, ^ center, > right
+%      +------------- fill character: *
+%  result: '**1,234.50'
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\ttfamily\Large,>=Stealth]
+  \foreach \p/\x/\col/\lab in {fill/0/cgold/{fill character (default space)},align/1/cgreen/{< left \ ^ center \ > right},width/2/cblue/{minimum width},sep/3/cpink/{, thousands separator},prec/4/cpurple/{.n decimals},type/5/cred/{f d s x b \%}} {
+    \node[draw=\col,fill=\col!12,minimum width=11mm,minimum height=9mm] (n\x) at (1.5*\x,0) {};
+  }
+  \node at (0,0) {*}; \node at (1.5,0) {>}; \node at (3,0) {10}; \node at (4.5,0) {,}; \node at (6,0) {.2}; \node at (7.5,0) {f};
+  \node[anchor=east] at (-0.8,0) {\{x:};
+  \node[anchor=west] at (8.3,0) {\}};
+  \node[font=\sffamily\scriptsize,text=cgold!70!black,below=3mm of n0,align=center] {fill\\char};
+  \node[font=\sffamily\scriptsize,text=cgreen!70!black,below=3mm of n1,align=center] {align\\\texttt{< \string^ >}};
+  \node[font=\sffamily\scriptsize,text=cblue,below=3mm of n2,align=center] {min\\width};
+  \node[font=\sffamily\scriptsize,text=cpink,below=3mm of n3,align=center] {1000s\\sep};
+  \node[font=\sffamily\scriptsize,text=cpurple,below=3mm of n4,align=center] {decimals};
+  \node[font=\sffamily\scriptsize,text=cred,below=3mm of n5,align=center] {type};
+\end{tikzpicture}
+\end{center}
+
+\begin{pycode}
+>>> model, n = "demo-1", 1234567
+>>> f"{1234.5:*>10,.2f}"
+'**1,234.50'
+>>> f"{n:,}"
+'1,234,567'
+>>> f"{0.4567:.1%}"
+'45.7%'
+>>> f"{model:>10}|{model:<10}|{model:^10}|"
+'    demo-1|demo-1    |  demo-1  |'
+>>> f"{7:03d}"
+'007'
+>>> f"{255:#x} {5:08b}"
+'0xff 00000101'
+\end{pycode}
+
+\begin{center}
+\begin{tabular}{@{}l l l@{}}
+\toprule
+\textbf{Spec} & \textbf{Meaning} & \textbf{\code{f"\{x:SPEC\}"} for \code{x = 3.14159}} \\
+\midrule
+\code{.2f} & 2 decimals & \code{3.14} \\
+\code{8.2f} & width 8, 2 decimals & \code{'    3.14'} \\
+\code{<8.2f} & left-aligned & \code{'3.14    '} \\
+\code{08.2f} & zero padded & \code{00003.14} \\
+\code{.2e} & scientific & \code{3.14e+00} \\
+\code{.0\%} & percent & \code{314\%} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Useful extras: \code{=} for debugging, \code{!r} for the \code{repr}, a nested field for a dynamic width, and
+doubled braces for literal braces.
+
+\begin{pycode}
+>>> model, n = "demo-1", 1234567
+>>> f"{model=}"
+"model='demo-1'"
+>>> f"{n * 2 = }"
+'n * 2 = 2469134'
+>>> f"{model!r}"
+"'demo-1'"
+>>> width = 8
+>>> f"{model:>{width}}"
+'  demo-1'
+>>> f'{{"model": "{model}"}}'
+'{"model": "demo-1"}'
+\end{pycode}
+
+\begin{trap}
+Braces are special in f-strings. To write a literal \code{\{} or \code{\}}, double it. This matters when you
+build JSON text or a prompt that contains braces. A single \code{\{} that you meant literally makes
+Python try to evaluate what follows it. For real JSON, prefer \code{json.dumps(data)}.
+\end{trap}
+
+\begin{pycode}
+>>> topic = "tokenizers"
+>>> prompt = f"""Explain {topic}.
+... Use two sentences."""
+>>> prompt
+'Explain tokenizers.\nUse two sentences.'
+\end{pycode}
+
+\begin{gamerule}
+Use f-strings for new code. Never build prompts by gluing user text into a template with
+\code{+} and no check: the text may contain braces, quotes or instructions. Keep the template
+fixed and insert values deliberately.
+\end{gamerule}
+
+\section{More String Things}
+
+Python has many more string methods (\code{partition}, \code{casefold}, \code{encode}, \code{isupper}, \ldots).
+The standard documentation lists them all. Chapter 17 adds Unicode and regular expressions.
+
+\section{Review}
+
+A string is an immutable sequence of characters. Index it with \code{[i]}, cut it with
+\code{[start:stop:step]}, and remember that methods return new strings. Use \code{split} and \code{join}
+to move between text and lists, \code{in} to ask whether something is present, and f-strings to build text.
+
+\begin{pycode}
+>>> s1 = "abcdef"
+>>> s1[:2] + "!" + s1[-2:]
+'ab!ef'
+\end{pycode}
+
+\begin{practice}
+\begin{enumerate}[itemsep=1pt]
+\item What do \code{"python"[1:4]}, \code{"python"[-3:]} and \code{"python"[::-1]} return? Check by hand first.
+\item Why does \code{word[0] = "T"} fail, and what are two ways to get \code{"Tokenize"} from \code{"tokenize"}?
+\item A reply contains \code{"  Yes.\textbackslash n"}. Which method returns just \code{"Yes."}? What does the original value look like afterwards?
+\item Why is \code{if s.find("key"):} a bug? What is the fix?
+\item Turn \code{["a", "b", "c"]} into \code{"a-b-c"}, and back into a list.
+\item Write an f-string that prints the float \code{0.8765} as a percentage with one decimal, right-aligned in 8 characters.
+\end{enumerate}
+\end{practice}
+
+\begin{achievement}{Text Wrangler}
+\begin{itemize}[itemsep=1pt]
+\item Create strings with quotes, triple quotes, raw strings and f-strings, and explain echo versus print.
+\item Index and slice any string and predict the result from the cut-line picture.
+\item Explain why strings are immutable and keep the result of every method.
+\item Clean and search text with \code{strip}, \code{split}, \code{join}, \code{replace}, \code{in} and \code{find}.
+\item Format numbers and layouts with the format-spec mini-language.
+\end{itemize}
+\end{achievement}

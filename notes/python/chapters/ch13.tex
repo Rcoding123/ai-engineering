@@ -1,0 +1,506 @@
+\chapter{Development Environment}
+
+\tikzset{pbox/.style={draw=cgray,fill=cgray!8,rounded corners=2pt,font=\sffamily\small,
+    inner sep=4pt,align=center},
+  parr/.style={-{Stealth[length=2mm]},thick,cgray}}
+\providecommand{\tnode}[4]{\node[anchor=west,text=#4] at (#1,-#2*0.46) {\ttfamily\small #3};}
+
+Writing code is half the job. The other half is the setup around it: where to get packages,
+how to keep each project's packages separate, which editor to use, and how to save your
+history safely. This chapter is the setup you need for every Python and \code{anthropic} project.
+
+% ------------------------------------------------------------
+\section{Find Python code}
+
+Before writing something, check if it already exists. Look in this order:
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Source} & \textbf{What it is} & \textbf{Notes} \\
+\midrule
+Standard library & ships with Python, no install & start here (Chapter~12) \\
+PyPI & the Python Package Index; what \code{pip} downloads from & more than half a million packages \\
+GitHub & source code hosting & sort by stars; check the last commit date \\
+Recipe collections & short snippets for one task & good for ideas, read before you paste \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{gamerule}[: judge a package before installing]
+Open its PyPI page and check: recent releases, a source link, a reasonable download count, a
+maintainer you can identify. Copy the name \emph{exactly}: fake packages with near-identical names
+(\code{anthropic} versus a typo) exist to steal API keys.
+\end{gamerule}
+
+% ------------------------------------------------------------
+\section{Install packages}
+
+\begin{center}
+%%MD-BEGIN
+% ```mermaid
+% flowchart LR
+%     A["pip install anthropic"] --> B["PyPI<br/>(internet)"]
+%     B --> C["download<br/>package + its dependencies"]
+%     C --> D[".venv/Lib/site-packages"]
+%     D --> E["import anthropic<br/>(found via sys.path)"]
+% ```
+%%MD-END
+\begin{tikzpicture}[node distance=5mm]
+  \node[pbox,draw=cblue,fill=cblue!10] (a) {\ttfamily\footnotesize pip install\\\ttfamily\footnotesize anthropic};
+  \node[pbox,right=of a] (b) {PyPI\\{\footnotesize on the internet}};
+  \node[pbox,right=of b] (c) {download package\\{\footnotesize + dependencies}};
+  \node[pbox,right=of c,draw=cgreen,fill=cgreen!10] (d) {\ttfamily\footnotesize .venv\textbackslash Lib\\\ttfamily\footnotesize site-packages};
+  \node[pbox,right=of d] (e) {\ttfamily\footnotesize import\\\ttfamily\footnotesize anthropic};
+  \foreach \x/\y in {a/b,b/c,c/d,d/e} \draw[parr] (\x)--(\y);
+\end{tikzpicture}
+\end{center}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Tool} & \textbf{What it does} & \textbf{When to pick it} \\
+\midrule
+\code{pip} & installs packages from PyPI; comes with Python & the default; learn it first \\
+\code{venv} & standard-library module that makes virtual environments & every project \\
+\code{virtualenv} & third-party ancestor of \code{venv} & old projects, extra features \\
+Pipenv & pip + virtualenv + a lock file & legacy teams \\
+Poetry & dependency management through \code{pyproject.toml} & publishing packages \\
+Conda & installs Python \emph{and} non-Python libraries (science stack) & data science, GPU libraries \\
+\code{uv} & very fast tool written in Rust; replaces pip, venv and more & new projects, if you want speed \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{pip}
+
+On Windows, prefer \code{python -m pip}. It runs pip \emph{for the exact interpreter} on the left, so
+you cannot install into one Python and run another.
+
+\begin{rawcode}
+> python -m pip install anthropic              latest version
+> python -m pip install "anthropic>=0.40"      minimum version
+> python -m pip install pytest==8.3.4          exact version
+> python -m pip install --upgrade anthropic    update
+> python -m pip uninstall anthropic            remove
+> python -m pip list                           what is installed here
+> python -m pip freeze                         the same, in requirements format
+\end{rawcode}
+
+(The text on the right is a note, not part of the command. Not run here: these download from the internet and change an environment. The version numbers
+are only examples of the syntax.)
+
+\begin{trap}
+Quote any specifier with \code{>}, \code{<} or \code{=} signs. In both PowerShell and cmd the shell
+reads \code{>} as ``redirect output to a file'', so \code{pip install anthropic>=0.40} creates a file called
+\code{=0.40}.
+\end{trap}
+
+\begin{center}
+\begin{tabular}{@{}l l@{}}
+\toprule
+\textbf{Specifier} & \textbf{Meaning} \\
+\midrule
+\code{pkg} & any version, usually the newest \\
+\code{pkg==1.4.2} & exactly this version \\
+\code{pkg>=1.4} & this version or newer \\
+\code{pkg>=1.4,<2} & newer than 1.4 but not 2.x \\
+\code{pkg\textasciitilde{}=1.4.2} & compatible: at least 1.4.2, below 1.5 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Requirements file.} A text file listing the packages a project needs, one per line. Anyone
+can rebuild the same setup with one command.
+
+\begin{rawcode}
+# requirements.txt
+anthropic>=0.40
+pytest>=8
+python-dotenv
+
+> python -m pip install -r requirements.txt
+\end{rawcode}
+
+\begin{gamerule}
+Keep \code{requirements.txt} in the project and commit it to Git. Use \code{pip freeze > requirements.txt}
+to record the \emph{exact} versions that work today, so a teammate (or you in six months) gets the same ones.
+\end{gamerule}
+
+\subsection{Other ways to install}
+
+\begin{itemize}[leftmargin=*,itemsep=1pt]
+\item \textbf{Native package managers} install programs, not just Python packages: Homebrew on
+  macOS, \code{apt} on Linux, and on Windows the MSI installer or \code{winget}. Python itself
+  on Windows usually comes this way, along with the \code{py} launcher.
+\item \textbf{From source.} If a project is not on PyPI, download or \code{git clone} it, then run
+  \code{python -m pip install .} inside its folder. (The book mentions \code{python setup.py install};
+  that old command is no longer recommended.) You can also install straight from Git with
+  \code{pip install git+https://...}.
+\end{itemize}
+
+\begin{trap}
+Installing code means running someone else's code on your machine, with access to your files and
+environment variables, including your \code{ANTHROPIC\_API\_KEY}. Pure-Python packages are readable, but
+malware in them has happened. Install only what you trust.
+\end{trap}
+
+% ------------------------------------------------------------
+\section{Virtual environments}
+
+\subsection{Why you need one}
+
+Project A may need \code{anthropic} 0.40, project B an older release. If both install into the one
+system Python, they collide. A \textbf{virtual environment} is a private folder holding a Python
+interpreter link plus its own \code{site-packages}. Each project gets its own.
+
+\begin{center}
+%%MD-BEGIN
+% ```mermaid
+% flowchart LR
+%     subgraph sys["System Python 3.12 (shared, leave it clean)"]
+%       L["python.exe + standard library"]
+%     end
+%     subgraph v1["project-a/.venv"]
+%       P1["site-packages:<br/>anthropic 0.40, pytest"]
+%     end
+%     subgraph v2["project-b/.venv"]
+%       P2["site-packages:<br/>older anthropic"]
+%     end
+%     v1 -. "home =" .-> sys
+%     v2 -. "home =" .-> sys
+% ```
+%%MD-END
+\begin{tikzpicture}[node distance=10mm]
+  \node[pbox,text width=4.3cm] (sys) {\textbf{System Python 3.12}\\{\footnotesize \texttt{python.exe} and the standard library. Shared, so keep it clean.}};
+  \node[pbox,draw=cgreen,fill=cgreen!10,text width=5.2cm,above right=0mm and 14mm of sys] (v1) {\textbf{project-a\textbackslash.venv}\\{\footnotesize \texttt{site-packages}: anthropic 0.40, pytest}};
+  \node[pbox,draw=cgold,fill=cgold!10,text width=5.2cm,below right=0mm and 14mm of sys] (v2) {\textbf{project-b\textbackslash.venv}\\{\footnotesize \texttt{site-packages}: an older anthropic}};
+  \draw[parr,dashed] (v1.west)--node[above,font=\scriptsize\sffamily,sloped]{\texttt{home =}}(sys.north east);
+  \draw[parr,dashed] (v2.west)--(sys.south east);
+\end{tikzpicture}
+\end{center}
+
+\subsection{Create and use one with \texttt{venv}}
+
+\begin{rawcode}
+> cd my-chat-app
+> python -m venv .venv                  create the folder .venv
+> .venv\Scripts\activate                cmd.exe
+> .venv\Scripts\Activate.ps1            PowerShell  (see the trap below)
+(.venv) > python -m pip install anthropic
+(.venv) > deactivate                    leave the environment
+\end{rawcode}
+
+On macOS and Linux the activation command is \code{source .venv/bin/activate}, and the folder is
+\code{bin} instead of \code{Scripts}. This is what the folder contains (real listing on Windows):
+
+\begin{center}
+%%MD-BEGIN
+% ```text
+% .venv/
+% |-- pyvenv.cfg        <- records "home =" the base Python
+% |-- Include/
+% |-- Lib/site-packages <- packages for THIS project
+% `-- Scripts/          <- python.exe, pip.exe, activate scripts
+% ```
+%%MD-END
+\begin{tikzpicture}
+  \tnode{0}{0}{.venv}{cgreen}
+  \draw[cgray] (0.15,-0.3)--(0.15,-1.8);
+  \foreach \i/\nm/\cmt in {1/pyvenv.cfg/records the base Python (home =),
+      2/Include/C headers (rarely used),
+      3/Lib\textbackslash site-packages/packages for THIS project,
+      4/Scripts/python.exe\, pip.exe\, activate scripts}{
+    \draw[cgray] (0.15,-\i*0.46)--(0.4,-\i*0.46);
+    \tnode{0.45}{\i}{\nm}{ink}
+    \node[font=\sffamily\footnotesize,text=cgray,anchor=west] at (5.2,-\i*0.46) {\cmt};}
+\end{tikzpicture}
+\end{center}
+
+\subsection{What ``activate'' really does}
+
+Your shell finds programs by searching the folders in the \code{PATH} environment variable, left to
+right. Activation puts \code{.venv\textbackslash Scripts} at the \emph{front}, so typing \code{python} or \code{pip} finds the
+project's copies first. Nothing else changes, and only in that terminal window.
+
+\begin{center}
+%%MD-BEGIN
+% ```text
+% before activate:  PATH = C:\Windows\System32 ; ...\Python312 ; ...
+% after  activate:  PATH = ...\.venv\Scripts ; C:\Windows\System32 ; ...\Python312 ; ...
+%                          ^ found first, so "python" means the venv's python
+% ```
+%%MD-END
+\begin{tikzpicture}[node distance=2mm]
+  \node[font=\sffamily\footnotesize,anchor=east] at (0,0) {before};
+  \node[pbox,anchor=west] (b1) at (0.2,0) {\ttfamily\footnotesize C:\textbackslash Windows\textbackslash System32};
+  \node[pbox,right=of b1] (b2) {\ttfamily\footnotesize ...\textbackslash Python312};
+  \node[pbox,right=of b2] (b3) {\ttfamily\footnotesize ...};
+  \node[font=\sffamily\footnotesize,anchor=east] at (0,-1.1) {after};
+  \node[pbox,anchor=west,draw=cgreen,fill=cgreen!10] (a0) at (0.2,-1.1) {\ttfamily\footnotesize .venv\textbackslash Scripts};
+  \node[pbox,right=of a0] (a1) {\ttfamily\footnotesize C:\textbackslash Windows\textbackslash System32};
+  \node[pbox,right=of a1] (a2) {\ttfamily\footnotesize ...\textbackslash Python312};
+  \node[font=\sffamily\scriptsize,text=cgreen!60!black,below=1mm of a0] {searched first};
+\end{tikzpicture}
+\end{center}
+
+\begin{trap}
+\textbf{PowerShell may refuse the script.} Windows can block \code{Activate.ps1} with an error about
+``running scripts is disabled''. You do not need activation at all: call the interpreter directly,
+\code{.venv\textbackslash Scripts\textbackslash python.exe -m pip install anthropic}. VS Code selects the interpreter for you
+(command palette, \emph{Python: Select Interpreter}) and activates it in new terminals.
+\end{trap}
+
+\subsection{Am I inside the venv?}
+
+Two attributes tell you. \code{sys.prefix} is the environment you run in; \code{sys.base\_prefix} is the Python
+it was built from. They differ only inside a venv.
+
+\begin{pycode}
+# envcheck.py
+import os
+import sys
+
+print(sys.executable.endswith("python.exe"))
+print("in a venv:", sys.prefix != sys.base_prefix)
+
+key = os.environ.get("DEMO_API_KEY")        # None if the variable is missing
+print(type(key))
+print("key is set" if key else "key is missing")
+
+os.environ["DEMO_PORT"] = "8080"            # values are always str
+port = os.environ["DEMO_PORT"]
+print(type(port), int(port) + 1)
+
+try:
+    os.environ["NOPE_NOT_SET"]
+except KeyError as err:
+    print("KeyError:", err)
+\end{pycode}
+\begin{rawcode}
+True
+in a venv: True
+<class 'NoneType'>
+key is missing
+<class 'str'> 8081
+KeyError: 'NOPE_NOT_SET'
+\end{rawcode}
+
+(Run with the interpreter of a venv created by \code{python -m venv .venv}.)
+
+\begin{typecheck}
+\code{os.environ} behaves like a \code{dict[str, str]}: every value is a \textbf{string}, so convert with \code{int(...)}
+yourself. \code{os.environ["X"]} raises \code{KeyError} when missing; \code{os.environ.get("X")} returns
+\code{None}. That is why you check an \code{Optional[str]} before using an API key.
+\end{typecheck}
+
+\begin{gamerule}[: keep secrets out of code]
+Put \code{ANTHROPIC\_API\_KEY} in an environment variable or a \code{.env} file, never in a \code{.py} file.
+List \code{.env} and \code{.venv/} in \code{.gitignore} so neither is ever committed.
+\end{gamerule}
+
+\subsection{The other tools, in a sentence each}
+
+\begin{itemize}[leftmargin=*,itemsep=1pt]
+\item \textbf{virtualenv}: the older third-party tool that \code{venv} was modelled on; same idea.
+\item \textbf{Pipenv}: runs pip and a virtualenv for you and writes a lock file of exact versions.
+\item \textbf{Poetry}: manages dependencies and packaging from a \code{pyproject.toml} file; needs a recent Python 3.
+\item \textbf{Conda}: a general package manager (not only Python), common for scientific stacks.
+\item \textbf{uv}: a fast modern replacement for most of the above. Same ideas, different commands:
+  \code{uv venv}, \code{uv pip install}.
+\end{itemize}
+
+% ------------------------------------------------------------
+\section{Integrated development environments}
+
+An IDE adds to a plain editor: autocomplete, inline docs, formatting and style checks, a file tree, source control,
+test and debug buttons. Pick one and learn it well.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Tool} & \textbf{Kind} & \textbf{Comment} \\
+\midrule
+Notepad++, vi/Vim, Neovim & text editors & fast and light; Vim keys take weeks to learn \\
+Sublime Text, Zed & fast code editors & Zed has built-in AI assistant features \\
+IDLE & Python's own small IDE & ships with Python; fine for first steps \\
+PyCharm & full Python IDE & free Community edition; heavy but complete \\
+\textbf{VS Code} & editor plus extensions & \textbf{free, most popular; you use it}; install the Python extension \\
+Cursor & VS Code fork with AI built in & same look and settings as VS Code \\
+IPython & improved interactive shell & \code{?} help, Tab completion, history lists \code{In} and \code{Out} \\
+Jupyter, JupyterLab & notebooks: code, output and text in cells & data and experiments; also inside VS Code \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{IPython and Jupyter}
+
+IPython is a nicer version of the plain interactive Python prompt. Install it with \code{python -m pip install ipython}. Typing
+\code{name?} shows the type, value and docstring of any object, and the \emph{Tab} key completes names.
+Jupyter wraps this in a browser notebook (\code{pip install jupyterlab}, run \code{jupyter lab}):
+you run small cells and see results below each one. Notebooks are excellent for trying out prompts and
+looking at data.
+
+\begin{trap}
+A notebook keeps variables alive between cells, in the order you \emph{ran} them, not the order they appear.
+A result can depend on a cell you deleted. Before trusting a notebook, restart the kernel and run all cells
+from the top. For application code, use plain \code{.py} files.
+\end{trap}
+
+% ------------------------------------------------------------
+\section{Source control}
+
+Source control records every saved version of your project, so you can see what changed, undo a mistake
+or work with others. \textbf{Git} is the standard; \textbf{Mercurial} (written in Python) is similar but
+less common. Both are \emph{distributed}: every copy holds the full history. \textbf{GitHub} is a website
+that hosts Git repositories.
+
+\subsection{The three places a change lives}
+
+\begin{center}
+%%MD-BEGIN
+% ```mermaid
+% flowchart LR
+%     W["working folder<br/>(your files)"] -- "git add" --> S["staging area<br/>(next snapshot)"]
+%     S -- "git commit" --> R["repository<br/>(saved history)"]
+%     W -. "git diff: what changed" .-> S
+% ```
+%%MD-END
+\begin{tikzpicture}[node distance=22mm]
+  \node[pbox,draw=cblue,fill=cblue!10,minimum width=3.2cm] (w) {working folder\\{\footnotesize the files you edit}};
+  \node[pbox,right=of w,draw=cgold,fill=cgold!10,minimum width=3.2cm] (s) {staging area\\{\footnotesize the next snapshot}};
+  \node[pbox,right=of s,draw=cgreen,fill=cgreen!10,minimum width=3.2cm] (r) {repository\\{\footnotesize saved history}};
+  \draw[parr] (w)--node[above,font=\ttfamily\scriptsize]{git add}(s);
+  \draw[parr] (s)--node[above,font=\ttfamily\scriptsize]{git commit}(r);
+  \draw[parr,dashed] (w.south) to[bend right=25] node[below,font=\ttfamily\scriptsize]{git diff shows the gap} (s.south);
+\end{tikzpicture}
+\end{center}
+
+\subsection{A first repository, step by step}
+
+Real output from a scratch folder (Git 2.x on Windows):
+
+\begin{rawcode}
+> git init -b main
+Initialized empty Git repository in .../repo/.git/
+
+> echo print("Oops") > hello.py
+> git add hello.py
+> git status
+On branch main
+No commits yet
+Changes to be committed:
+        new file:   hello.py
+
+> git commit -m "add hello script"
+[main (root-commit) 8357896] add hello script
+ 1 file changed, 1 insertion(+)
+ create mode 100644 hello.py
+\end{rawcode}
+
+Now edit \code{hello.py} (change \code{Oops} to \code{Hi}) and look at the change before saving it:
+
+\begin{rawcode}
+> git status
+Changes not staged for commit:
+        modified:   hello.py
+
+> git diff
+--- a/hello.py
++++ b/hello.py
+@@ -1 +1 @@
+-print("Oops")
++print("Hi")
+
+> git add hello.py
+> git commit -m "fix greeting"
+[main 619bb0e] fix greeting
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+> git log --oneline
+619bb0e fix greeting
+8357896 add hello script
+\end{rawcode}
+
+(Git on Windows may also print \code{warning: LF will be replaced by CRLF}. It is about line endings
+and is harmless here.)
+
+\begin{center}
+%%MD-BEGIN
+% ```mermaid
+% flowchart LR
+%     C1["8357896<br/>add hello script"] --> C2["619bb0e<br/>fix greeting"] --> H["HEAD / main"]
+% ```
+%%MD-END
+\begin{tikzpicture}[node distance=10mm]
+  \node[pbox] (c1) {\ttfamily\footnotesize 8357896\\{\sffamily add hello script}};
+  \node[pbox,right=of c1] (c2) {\ttfamily\footnotesize 619bb0e\\{\sffamily fix greeting}};
+  \node[pbox,right=of c2,draw=cgreen,fill=cgreen!10] (h) {\ttfamily\footnotesize HEAD $\to$ main};
+  \draw[parr] (c1)--node[above,font=\scriptsize\sffamily]{then}(c2);
+  \draw[parr] (c2)--(h);
+\end{tikzpicture}
+\end{center}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+\textbf{Command} & \textbf{What it does} \\
+\midrule
+\code{git init} & turn the current folder into a repository \\
+\code{git status} & show what is changed, staged, or untracked \\
+\code{git add file} / \code{git add .} & put a file (or all changes) into the staging area \\
+\code{git commit -m "msg"} & save the staged snapshot with a message \\
+\code{git diff} & show line changes not yet staged \\
+\code{git log} / \code{git log --oneline} & show history, newest first \\
+\code{git clone url} & copy a whole repository from a host such as GitHub \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{trap}
+\code{git commit} saves only what you staged. If you edit a file and commit without \code{git add}, Git
+answers ``no changes added to commit'' and nothing is saved. Also: \code{git add .} stages \emph{everything},
+including a \code{.env} file with a key. Write the \code{.gitignore} first:
+\begin{rawcode}
+.venv/
+__pycache__/
+.env
+\end{rawcode}
+\end{trap}
+
+\begin{gamerule}
+Commit small and often, with a message that says \emph{what} changed (``fix greeting''), not ``stuff''.
+Commit when the tests pass. Review with \code{git diff} before every commit.
+\end{gamerule}
+
+\begin{boss}[: ``which Python am I running?'']
+Most setup bugs are a mismatch: you installed a package into one Python and run your code with another
+(\code{ModuleNotFoundError: No module named 'anthropic'} right after a successful install). Ask three questions:
+(1) \code{import sys; print(sys.executable)}: which interpreter is running? (2) \code{sys.prefix != sys.base\_prefix}: is it a venv?
+(3) \code{python -m pip --version}: does pip belong to the same interpreter? Always install with
+\code{python -m pip} and make VS Code use the \code{.venv} interpreter, and the mismatch disappears.
+\end{boss}
+
+\begin{practice}
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+\item Create a project folder with a \code{.venv}. Which two commands activate it in PowerShell and in cmd, and how do you leave it?
+\item You ran \code{pip install anthropic} but Python says the module is missing. List three causes you would check.
+\item Write a \code{requirements.txt} that needs any \code{anthropic}, \code{pytest} 8 or newer, and nothing else. How does a teammate install it?
+\item What does \code{git add} do that \code{git commit} does not? Why is there a staging area at all?
+\item Write the lines for a \code{.gitignore} in an LLM project and say why each line is there.
+\item Read an API key from an environment variable. What is the type of the result when the variable is missing, and what do you do about it?
+\end{enumerate}
+\end{practice}
+
+\begin{achievement}{Environment Engineer}
+\begin{itemize}[leftmargin=*,itemsep=1pt]
+\item Create a virtual environment, install packages into it, and prove which Python you are using.
+\item Record and rebuild a project's dependencies with \code{requirements.txt}.
+\item Keep secrets out of code and out of Git with environment variables and \code{.gitignore}.
+\item Make, review and list commits with Git.
+\end{itemize}
+\end{achievement}
+
+%%MD-BEGIN
+% **Related:** [[12 - Modules and Packages]] (what pip installs), [[14 - Type Hints and Documentation]] (mypy runs in the venv), [[15 - Testing]] (pytest, CI), [[16 - Debugging]] (find which Python), [[20 - Files]] (reading `.env`).
+%%MD-END

@@ -1,0 +1,1321 @@
+\chapter{Objects}
+
+Everything in Python is an object, but you only need to look inside objects when you build your
+own. This chapter explains classes, \code{\_\_init\_\_} and \code{self}, inheritance, properties,
+and the special methods (\code{\_\_repr\_\_}, \code{\_\_eq\_\_}, \code{\_\_call\_\_}) that make your objects
+behave like built-in ones. It ends with named tuples, dataclasses and nested objects, which is the
+shape of almost every API response you will handle.
+
+\tikzset{
+  t11cls/.style={draw=cpurple,fill=cpurple!8,rounded corners=2pt,inner sep=3.5pt,font=\ttfamily\small},
+  t11obj/.style={draw=cblue,fill=cblue!8,rounded corners=2pt,inner sep=3.5pt,font=\ttfamily\small},
+  t11name/.style={draw=cgold,fill=cgold!15,rounded corners=2pt,inner sep=3.5pt,font=\ttfamily\small},
+  t11fn/.style={draw=cteal,fill=cteal!10,rounded corners=2pt,inner sep=3.5pt,font=\ttfamily\small},
+  t11bad/.style={draw=cred,fill=cred!8,rounded corners=2pt,inner sep=3.5pt,font=\ttfamily\small},
+  t11note/.style={font=\scriptsize\sffamily,text=cgray},
+  t11arr/.style={->,thick,cgray,>=Stealth},
+}
+
+% ------------------------------------------------------------
+\section{What are objects?}
+
+An object bundles \textbf{data} (called \emph{attributes}) with \textbf{code} (functions called
+\emph{methods}). Think of objects as nouns and methods as verbs. The integer \code{7} is an
+object, \code{"hi"} is an object, and each belongs to a \emph{class} (\code{int}, \code{str})
+that says what such objects can do. A class is the mold, an object (an \emph{instance}) is one
+thing made from it. Many instances of one class can exist at once, each with its own data.
+
+% DIAGRAM-BEGIN d11-class
+\begin{center}
+\begin{tikzpicture}
+  \node[t11cls,align=left] (c) at (0,0) {class ChatSession\\[-1pt]{\scriptsize\sffamily the mold: methods live here}};
+  \node[t11obj,align=left] (a) at (6.7,0.9) {chat\_a\\[-1pt]{\scriptsize\sffamily model = "small-fast"}\\[-3pt]{\scriptsize\sffamily messages = [...]}};
+  \node[t11obj,align=left] (b) at (6.7,-0.9) {chat\_b\\[-1pt]{\scriptsize\sffamily model = "large-slow"}\\[-3pt]{\scriptsize\sffamily messages = [ ]}};
+  \draw[t11arr] (c.east) -- node[above,t11note,sloped]{instance of} (a.west);
+  \draw[t11arr] (c.east) -- node[below,t11note,sloped]{instance of} (b.west);
+\end{tikzpicture}
+\end{center}
+% DIAGRAM-END d11-class
+
+\begin{pycode}
+>>> type(7), type("hi"), type([1])
+(<class 'int'>, <class 'str'>, <class 'list'>)
+>>> z = 3 + 4j
+>>> z.real                  # an attribute: stored data
+3.0
+>>> z.conjugate()           # a method: a function that belongs to the object
+(3-4j)
+\end{pycode}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X X@{}}
+\toprule
+ & \textbf{attribute} & \textbf{method} \\
+\midrule
+What it is & a variable stored on the object (or class) & a function stored on the class \\
+Read it & \code{obj.name} & \code{obj.name} gives the method, \code{obj.name()} calls it \\
+Example & \code{z.real} & \code{z.conjugate()} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+% ------------------------------------------------------------
+\section{Simple objects}
+
+\subsection{Define a class and create objects}
+
+The \code{class} keyword defines a new class. Calling the class like a function makes an
+instance.
+
+\begin{pycode}
+>>> class Prompt:
+...     pass
+...
+>>> p1 = Prompt()
+>>> p2 = Prompt()
+>>> p1
+<__main__.Prompt object at 0x...>
+>>> p1 is p2, p1 == p2       # two different objects
+(False, False)
+\end{pycode}
+
+\subsection{Assign attributes}
+
+An attribute is a variable that belongs to an object. You can attach one at any time with
+\code{obj.name = value}. Read it back with a dot. Reading one that was never set raises
+\code{AttributeError}.
+
+\begin{pycode}
+>>> p1.text = "Say hi"
+>>> p1.max_tokens = 50
+>>> p1.text, p1.max_tokens
+('Say hi', 50)
+>>> vars(p1)                 # the object's attributes, stored as a dict
+{'text': 'Say hi', 'max_tokens': 50}
+>>> p2.text
+Traceback (most recent call last):
+  ...
+AttributeError: 'Prompt' object has no attribute 'text'
+\end{pycode}
+
+Setting attributes one by one after creation is fragile: nothing guarantees every object gets
+the same ones. The fix is the initializer.
+
+\subsection{Methods, \code{\_\_init\_\_} and \code{self}}
+
+A method is a function defined inside a class. \code{\_\_init\_\_} is a special method that Python
+calls right after it creates a blank instance, so you can fill in its attributes. Every
+instance method receives the instance itself as its first parameter, named \code{self} by
+convention. \code{self.model = model} means ``store the value on \emph{this} object''.
+
+% DIAGRAM-BEGIN d11-init
+\begin{center}
+\begin{tikzpicture}
+  \node[t11fn,align=center] (s1) at (0,0) {1. create\\[-1pt]blank object};
+  \node[t11fn,align=center] (s2) at (3.9,0) {2. call\\[-1pt]\_\_init\_\_(self, ...)};
+  \node[t11fn,align=center] (s3) at (8.2,0) {3. fill in\\[-1pt]self.model, self.messages};
+  \node[t11fn,align=center] (s4) at (12.4,0) {4. return it,\\[-1pt]bind to the name};
+  \foreach \a/\b in {s1/s2,s2/s3,s3/s4} \draw[t11arr] (\a) -- (\b);
+  \node[t11note] at (6.2,-1.0) {all of this happens when you write \code{chat = ChatSession("small-fast")}};
+\end{tikzpicture}
+\end{center}
+% DIAGRAM-END d11-init
+
+\begin{pycode}
+>>> class ChatSession:
+...     def __init__(self, model, system=None):
+...         self.model = model
+...         self.system = system
+...         self.messages = []              # a fresh list for every instance
+...
+...     def add_user(self, text):
+...         self.messages.append({"role": "user", "content": text})
+...
+...     def add_assistant(self, text):
+...         self.messages.append({"role": "assistant", "content": text})
+...
+...     def turns(self):
+...         return len(self.messages)
+...
+>>> chat = ChatSession("small-fast", system="Be brief")
+>>> chat.add_user("Hello")
+>>> chat.add_assistant("Hi!")
+>>> chat.turns()
+2
+>>> chat.model
+'small-fast'
+>>> chat.messages
+[{'role': 'user', 'content': 'Hello'},
+ {'role': 'assistant', 'content': 'Hi!'}]
+>>> ChatSession("large-slow").turns()       # a new, separate object
+0
+\end{pycode}
+
+\code{\_\_init\_\_} is an \emph{initializer}, not a constructor: Python has already built the object
+by the time it runs. It should set attributes and return nothing.
+
+\begin{typecheck}
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+\textbf{Expression} & \textbf{Type} & \textbf{What you can do} \\
+\midrule
+\code{ChatSession} & \code{type} (a class) & call it to make instances; it is an object too \\
+\code{chat} & \code{ChatSession} & read and set attributes, call methods \\
+\code{chat.model} & \code{str} & any \code{str} method \\
+\code{chat.messages} & \code{list} & \code{.append}, index, loop \\
+\code{chat.add\_user} & bound \code{method} & call it; \code{self} is already filled in \\
+\code{ChatSession.add\_user} & \code{function} & plain function; you must pass the instance yourself \\
+\bottomrule
+\end{tabularx}
+\end{typecheck}
+
+\begin{trap}[: forgetting \code{self}]
+Two classic mistakes. Writing \code{model = model} in \code{\_\_init\_\_} only sets a local variable,
+so nothing is stored on the object. Leaving \code{self} out of a method's parameters makes
+Python pass one argument too many.
+\end{trap}
+
+\begin{pycode}
+>>> class Broken:
+...     def __init__(self, model):
+...         model = model                   # missing "self."
+...     def hello():                        # missing self
+...         return "hi"
+...
+>>> Broken("x").model
+Traceback (most recent call last):
+  ...
+AttributeError: 'Broken' object has no attribute 'model'
+>>> Broken("x").hello()
+Traceback (most recent call last):
+  ...
+TypeError: Broken.hello() takes 0 positional arguments but 1 was given
+\end{pycode}
+
+% ------------------------------------------------------------
+\section{Inheritance}
+
+A subclass is a new class built from an existing one. It gets everything the parent has and may
+add or change things. The parent is also called the base or superclass. The relationship is
+\emph{is-a}: a \code{Counting} client is a \code{Client}.
+
+% DIAGRAM-BEGIN d11-inherit
+\begin{center}
+\begin{tikzpicture}
+  \node[t11cls] (p) at (4.4,1.6) {Client};
+  \node[t11cls,align=center] (c1) at (0.8,0) {Shouty\\[-1pt]{\scriptsize\sffamily overrides complete}};
+  \node[t11cls,align=center] (c2) at (7.9,0) {Counting\\[-1pt]{\scriptsize\sffamily extends \_\_init\_\_, adds stats}};
+  \draw[t11arr] (c1) -- node[above left,t11note]{inherits} (p);
+  \draw[t11arr] (c2) -- node[above right,t11note]{inherits} (p);
+  \node[t11note,anchor=west] at (5.2,1.6) {\_\_init\_\_, complete};
+\end{tikzpicture}
+\end{center}
+% DIAGRAM-END d11-inherit
+
+\subsection{Inherit, override, add a method}
+
+\begin{pycode}
+>>> class Client:
+...     def __init__(self, name):
+...         self.name = name
+...     def complete(self, prompt):
+...         return f"[{self.name}] {prompt}"
+...
+>>> class Shouty(Client):                   # overrides complete
+...     def complete(self, prompt):
+...         return super().complete(prompt).upper()
+...
+>>> class Counting(Client):
+...     def __init__(self, name):
+...         super().__init__(name)          # let the parent set self.name
+...         self.calls = 0
+...     def complete(self, prompt):
+...         self.calls += 1
+...         return super().complete(prompt)
+...     def stats(self):                    # a new method only Counting has
+...         return f"{self.calls} calls"
+...
+\end{pycode}
+
+Now use them:
+
+\begin{pycode}
+>>> Client("a").complete("hi")
+'[a] hi'
+>>> Shouty("b").complete("hi")
+'[B] HI'
+>>> c = Counting("c")
+>>> c.complete("x")
+'[c] x'
+>>> c.complete("y")
+'[c] y'
+>>> c.stats()
+'2 calls'
+>>> issubclass(Counting, Client), isinstance(c, Client), isinstance(c, Shouty)
+(True, True, False)
+>>> Client("a").stats()
+Traceback (most recent call last):
+  ...
+AttributeError: 'Client' object has no attribute 'stats'
+\end{pycode}
+
+\code{super()} gives access to the parent's version of a method. Use it when the child does
+something its own way but still needs what the parent does. Defining \code{\_\_init\_\_} in a child
+\emph{replaces} the parent's, so call \code{super().\_\_init\_\_(...)} yourself.
+
+\begin{trap}[: a child \code{\_\_init\_\_} that skips the parent's]
+If the child's \code{\_\_init\_\_} never calls \code{super().\_\_init\_\_}, the attributes the parent
+would have set simply do not exist.
+\end{trap}
+
+\begin{pycode}
+>>> class Forgetful(Client):
+...     def __init__(self, name):
+...         self.calls = 0                  # forgot super().__init__(name)
+...
+>>> Forgetful("z").complete("hi")
+Traceback (most recent call last):
+  ...
+AttributeError: 'Forgetful' object has no attribute 'name'
+\end{pycode}
+
+\subsection{Multiple inheritance and method resolution order}
+
+A class can have several parents. When an attribute is missing from the object, Python looks
+through the \emph{method resolution order} (MRO), a fixed list of classes. The first class that
+has the name wins. The order follows the parents as you wrote them.
+
+% DIAGRAM-BEGIN d11-mro
+\begin{center}
+\begin{tikzpicture}
+  \node[t11cls] (r) at (0,0) {RouterA};
+  \node[t11cls] (f) at (3.6,0) {FastModel};
+  \node[t11cls] (c) at (7.4,0) {CheapModel};
+  \node[t11cls] (b) at (11.2,0) {Base};
+  \node[t11cls] (o) at (13.9,0) {object};
+  \foreach \a/\b in {r/f,f/c,c/b,b/o} \draw[t11arr] (\a) -- (\b);
+  \node[t11note] at (6.9,-0.8) {\code{class RouterA(FastModel, CheapModel)}: search left to right; first match wins};
+  \node[t11note] at (6.9,0.7) {MRO of RouterA};
+\end{tikzpicture}
+\end{center}
+% DIAGRAM-END d11-mro
+
+\begin{pycode}
+>>> class Base:
+...     def label(self):
+...         return "base"
+...
+>>> class FastModel(Base):
+...     def label(self):
+...         return "fast"
+...
+>>> class CheapModel(Base):
+...     def label(self):
+...         return "cheap"
+...
+>>> class RouterA(FastModel, CheapModel):
+...     pass
+...
+>>> class RouterB(CheapModel, FastModel):
+...     pass
+...
+>>> RouterA().label(), RouterB().label()
+('fast', 'cheap')
+>>> [cls.__name__ for cls in RouterA.mro()]
+['RouterA', 'FastModel', 'CheapModel', 'Base', 'object']
+\end{pycode}
+
+\subsection{Mixins}
+
+A mixin is a small parent class that adds one helper behavior and is not meant to stand alone,
+such as logging or JSON output. It avoids the confusion of overlapping method names because it
+shares no names with its siblings.
+
+\begin{pycode}
+>>> import json
+>>> class JsonMixin:
+...     def to_json(self):
+...         return json.dumps(vars(self))
+...
+>>> class Usage(JsonMixin):
+...     def __init__(self, input_tokens, output_tokens):
+...         self.input_tokens = input_tokens
+...         self.output_tokens = output_tokens
+...
+>>> Usage(12, 5).to_json()
+'{"input_tokens": 12, "output_tokens": 5}'
+\end{pycode}
+
+\begin{keyidea}[: inheritance is easy to overuse]
+Deep inheritance trees couple children tightly to their parents. Prefer composition (an object
+\emph{has} other objects, see below) unless the child truly \emph{is} a more specific parent.
+\end{keyidea}
+
+% ------------------------------------------------------------
+\section{In self defense}
+
+Python makes \code{self} visible, which many newcomers find noisy. The reason is simple: a method is an
+ordinary function stored in the class, and \code{self} is just its first argument. When you write
+\code{chat.add\_user("x")}, Python looks up \code{add\_user} on the class of \code{chat} and passes
+\code{chat} as the first argument.
+
+% DIAGRAM-BEGIN d11-self
+\begin{center}
+\begin{tikzpicture}
+  \node[t11name] (w) at (0,0) {chat.add\_user("x")};
+  \node[t11fn,align=center] (l) at (5.4,0) {look up \code{add\_user}\\[-1pt]on type(chat)};
+  \node[t11obj] (r) at (10.7,0) {ChatSession.add\_user(chat, "x")};
+  \draw[t11arr] (w) -- node[above,t11note]{you write} (l);
+  \draw[t11arr] (l) -- node[above,t11note]{Python runs} (r);
+\end{tikzpicture}
+\end{center}
+% DIAGRAM-END d11-self
+
+\begin{pycode}
+>>> chat.add_user("Another")
+>>> ChatSession.add_user(chat, "Third")     # exactly what Python does for you
+>>> chat.turns()
+4
+>>> type(chat.add_user), type(ChatSession.add_user)
+(<class 'method'>, <class 'function'>)
+>>> chat.add_user.__self__ is chat          # bound method keeps its instance
+True
+\end{pycode}
+
+% ------------------------------------------------------------
+\section{Attribute access}
+
+Python has no truly private attributes. The culture is ``consenting adults'': a leading
+underscore (\code{\_name}) says ``internal, please do not touch''. Here is the ladder of options.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X X@{}}
+\toprule
+\textbf{Style} & \textbf{Reading / writing} & \textbf{When} \\
+\midrule
+Direct attribute & \code{obj.name}, \code{obj.name = v} & the default; start here \\
+Getter / setter methods & \code{obj.get\_name()}, \code{obj.set\_name(v)} & avoid in Python \\
+Property & looks like \code{obj.name}, runs code & validation or computed values \\
+Name mangling & \code{self.\_\_name} & rarely; avoids clashes in subclasses \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Getters, setters and properties}
+
+Languages like Java need getter and setter methods from day one. In Python you start with a
+plain attribute and switch to a \emph{property} later if you need control. Callers keep writing
+\code{obj.name}, so no other code changes. A property is a method you access like an attribute.
+
+% DIAGRAM-BEGIN d11-prop
+\begin{center}
+\begin{tikzpicture}
+  \node[t11name] (w) at (0,0.5) {s.temperature = 5};
+  \node[t11name] (r) at (0,-0.5) {s.temperature};
+  \node[t11fn,align=center] (set) at (5.2,0.5) {setter runs\\[-1pt]checks 0..1, may raise};
+  \node[t11fn] (get) at (5.2,-0.5) {getter runs};
+  \node[t11obj] (st) at (10.6,0) {s.\_temperature};
+  \draw[t11arr] (w) -- (set);
+  \draw[t11arr] (r) -- (get);
+  \draw[t11arr] (set) -- (st);
+  \draw[t11arr] (st) -- (get);
+  \node[t11note] at (8.0,-1.1) {the real value hides behind a leading underscore};
+\end{tikzpicture}
+\end{center}
+% DIAGRAM-END d11-prop
+
+\begin{pycode}
+>>> class Sampler:
+...     def __init__(self, temperature=0.7):
+...         self.temperature = temperature     # goes through the setter
+...
+...     @property
+...     def temperature(self):
+...         return self._temperature
+...
+...     @temperature.setter
+...     def temperature(self, value):
+...         if not 0.0 <= value <= 1.0:
+...             raise ValueError(f"temperature must be 0..1, got {value}")
+...         self._temperature = value
+...
+>>> s = Sampler()
+>>> s.temperature
+0.7
+>>> s.temperature = 0.2
+>>> s.temperature = 5
+Traceback (most recent call last):
+  ...
+ValueError: temperature must be 0..1, got 5
+>>> vars(s)
+{'_temperature': 0.2}
+\end{pycode}
+
+The older spelling builds the same thing from two ordinary methods. The decorator form above is
+the one to write.
+
+\begin{pycode}
+>>> class TokenBudget:
+...     def __init__(self, tokens):
+...         self._tokens = tokens
+...     def get_tokens(self):
+...         return self._tokens
+...     def set_tokens(self, value):
+...         self._tokens = value
+...     tokens = property(get_tokens, set_tokens)
+...
+>>> b = TokenBudget(100)
+>>> b.tokens = 250
+>>> b.tokens
+250
+\end{pycode}
+
+\subsection{Properties for computed values}
+
+A property does not have to store anything. It can compute a value from other attributes each time.
+Without a setter it is read-only.
+
+\begin{pycode}
+>>> class Usage:
+...     def __init__(self, input_tokens, output_tokens):
+...         self.input_tokens = input_tokens
+...         self.output_tokens = output_tokens
+...     @property
+...     def total(self):
+...         return self.input_tokens + self.output_tokens
+...
+>>> u = Usage(120, 30)
+>>> u.total
+150
+>>> u.output_tokens = 80
+>>> u.total                        # recomputed
+200
+>>> u.total = 1
+Traceback (most recent call last):
+  ...
+AttributeError: property 'total' of 'Usage' object has no setter
+\end{pycode}
+
+\subsection{Name mangling}
+
+An attribute named with two leading underscores gets its name rewritten to
+\code{\_ClassName\_\_name}. This stops accidental clashes, but it is not security.
+
+\begin{pycode}
+>>> class Client2:
+...     def __init__(self, key):
+...         self.__key = key
+...
+>>> c2 = Client2("sk-test")
+>>> c2.__key
+Traceback (most recent call last):
+  ...
+AttributeError: 'Client2' object has no attribute '__key'
+>>> c2._Client2__key
+'sk-test'
+\end{pycode}
+
+\begin{gamerule}
+Never put real secrets in objects you print or log. A default \code{repr} does not show
+attributes, but a dataclass \code{repr} does. Keep API keys in environment variables and
+hide them from \code{repr} (see the dataclass section).
+\end{gamerule}
+
+% ------------------------------------------------------------
+\section{Class attributes and object attributes}
+
+A variable assigned in the class body belongs to the class and is shared. Instances can read it.
+Assigning through an instance creates a new attribute on \emph{that instance} that hides the
+class one (it does not change the class). Python looks up a name on the instance first, then the
+class, then the parent classes.
+
+% DIAGRAM-BEGIN d11-lookup
+\begin{center}
+\begin{tikzpicture}
+  \node[t11obj,align=left] (a) at (0,0.9) {a\\[-1pt]{\scriptsize\sffamily name = "x"}\\[-3pt]{\scriptsize\sffamily provider = "local"}};
+  \node[t11obj,align=left] (b) at (0,-1.0) {b\\[-1pt]{\scriptsize\sffamily name = "y"}};
+  \node[t11cls,align=left] (c) at (6.0,0) {class Model\\[-1pt]{\scriptsize\sffamily provider = "acme"}};
+  \node[t11cls] (o) at (10.4,0) {object};
+  \draw[t11arr] (a) -- node[above,t11note,sloped]{not found? ask class} (c);
+  \draw[t11arr] (b) -- (c);
+  \draw[t11arr] (c) -- node[above,t11note]{then parents} (o);
+  \node[t11note,align=left,anchor=west] at (1.6,1.7) {\code{a.provider}: found on a first, so "local"};
+  \node[t11note,align=left,anchor=west] at (1.6,-1.8) {\code{b.provider}: not on b, so class gives "acme"};
+\end{tikzpicture}
+\end{center}
+% DIAGRAM-END d11-lookup
+
+\begin{pycode}
+>>> class Model:
+...     provider = "acme"                  # class attribute
+...     def __init__(self, name):
+...         self.name = name               # instance attribute
+...
+>>> a, b = Model("x"), Model("y")
+>>> Model.provider, a.provider
+('acme', 'acme')
+>>> a.provider = "local"                   # makes an instance attribute
+>>> a.provider, b.provider, Model.provider
+('local', 'acme', 'acme')
+>>> Model.provider = "other"               # hits instances without their own
+>>> a.provider, b.provider
+('local', 'other')
+>>> vars(a)
+{'name': 'x', 'provider': 'local'}
+\end{pycode}
+
+\begin{trap}[: a mutable class attribute is shared by all instances]
+\code{history = []} in the class body creates one list for the whole class. Every instance
+that appends to it changes the same list. Create per-instance lists in \code{\_\_init\_\_}.
+\end{trap}
+
+\begin{pycode}
+>>> class Shared:
+...     history = []                       # one list for everyone
+...     def add(self, text):
+...         self.history.append(text)
+...
+>>> x, y = Shared(), Shared()
+>>> x.add("hi")
+>>> y.history                              # y never added anything
+['hi']
+\end{pycode}
+
+% ------------------------------------------------------------
+\section{Method types}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l l X@{}}
+\toprule
+\textbf{Kind} & \textbf{Decorator} & \textbf{First parameter} & \textbf{Use it for} \\
+\midrule
+Instance method & none & \code{self}, the object & work on one object's data \\
+Class method & \code{@classmethod} & \code{cls}, the class & class-wide data; alternative constructors \\
+Static method & \code{@staticmethod} & nothing special & a helper that lives in the class for tidiness \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+% DIAGRAM-BEGIN d11-methods
+\begin{center}
+\begin{tikzpicture}
+  \node[t11name] (c1) at (0,1.0) {s.describe()};
+  \node[t11name] (c2) at (0,0) {Session.how\_many()};
+  \node[t11name] (c3) at (0,-1.0) {Session.estimate\_tokens(t)};
+  \node[t11obj] (r1) at (7.2,1.0) {self = s  (the instance)};
+  \node[t11cls] (r2) at (7.2,0) {cls = Session  (the class)};
+  \node[t11fn] (r3) at (7.2,-1.0) {nothing extra is passed};
+  \foreach \i in {1,2,3} \draw[t11arr] (c\i) -- (r\i);
+  \node[t11note,anchor=west] at (10.1,1.0) {instance method};
+  \node[t11note,anchor=west] at (10.1,0) {class method};
+  \node[t11note,anchor=west] at (10.1,-1.0) {static method};
+\end{tikzpicture}
+\end{center}
+% DIAGRAM-END d11-methods
+
+\begin{pycode}
+>>> class Session:
+...     count = 0                          # class attribute: sessions made
+...     def __init__(self, model):
+...         self.model = model
+...         Session.count += 1
+...     def describe(self):                # instance method
+...         return f"session on {self.model}"
+...     @classmethod
+...     def how_many(cls):                 # class method
+...         return cls.count
+...     @classmethod
+...     def from_dict(cls, data):          # alternative constructor
+...         return cls(data["model"])
+...     @staticmethod
+...     def estimate_tokens(text):         # static method
+...         return len(text) // 4
+...
+>>> s1 = Session("small-fast")
+>>> s2 = Session.from_dict({"model": "large-slow"})
+>>> Session.how_many()
+2
+>>> s2.describe()
+'session on large-slow'
+>>> Session.estimate_tokens("Explain what a token is")
+5
+\end{pycode}
+
+\begin{gamerule}
+\code{@classmethod def from\_dict(cls, data)} is the standard way to build an object from
+parsed JSON. Use \code{cls(...)} rather than the class name so subclasses build themselves.
+\end{gamerule}
+
+% ------------------------------------------------------------
+\section{Duck typing}
+
+Python does not check an object's class when you call a method. It only asks: does the object
+have that method? If it walks like a duck and quacks like a duck, treat it as a duck. Two
+unrelated classes that both have \code{complete(prompt)} are interchangeable for any code that only
+calls \code{complete}.
+
+% DIAGRAM-BEGIN d11-duck
+\begin{center}
+\begin{tikzpicture}
+  \node[t11cls] (r) at (0,1.0) {RealClient};
+  \node[t11cls] (f) at (0,0) {FakeClient};
+  \node[t11cls] (x) at (0,-1.0) {Any object with .complete};
+  \node[t11fn,align=center] (fn) at (6.2,0) {summarize(client, text)\\[-1pt]{\scriptsize\sffamily calls client.complete(...)}};
+  \foreach \i in {r,f,x} \draw[t11arr] (\i) -- (fn);
+  \node[t11note,anchor=west] at (8.9,0.3) {no shared parent needed:};
+  \node[t11note,anchor=west] at (8.9,-0.1) {only the method name matters};
+\end{tikzpicture}
+\end{center}
+% DIAGRAM-END d11-duck
+
+\begin{pycode}
+>>> class RealClient:
+...     def complete(self, prompt):
+...         return "(would call the network here)"
+...
+>>> class FakeClient:
+...     def complete(self, prompt):
+...         return "canned reply"
+...
+>>> def summarize(client, text):
+...     return client.complete("Summarize: " + text)
+...
+>>> summarize(FakeClient(), "a long article")   # handy in tests: no network
+'canned reply'
+>>> summarize(object(), "a long article")
+Traceback (most recent call last):
+  ...
+AttributeError: 'object' object has no attribute 'complete'
+\end{pycode}
+
+% ------------------------------------------------------------
+\section{Magic methods}
+
+Operators and built-in functions call special methods on your object. These methods have names
+that start and end with two underscores (``dunder'' methods). Define them and your class works
+with \code{==}, \code{+}, \code{print}, \code{len}, \code{[]} and even \code{()}.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+\textbf{You write} & \textbf{Python calls} & \textbf{Typical return} \\
+\midrule
+\code{a == b}, \code{a != b} & \code{a.\_\_eq\_\_(b)}, \code{a.\_\_ne\_\_(b)} & \code{bool} \\
+\code{a < b}, \code{>}, \code{<=}, \code{>=} & \code{a.\_\_lt\_\_(b)}, \code{\_\_gt\_\_}, \code{\_\_le\_\_}, \code{\_\_ge\_\_} & \code{bool} \\
+\code{a + b}, \code{a - b}, \code{a * b} & \code{a.\_\_add\_\_(b)}, \code{\_\_sub\_\_}, \code{\_\_mul\_\_} & a new object \\
+\code{a / b}, \code{a // b}, \code{a \% b}, \code{a ** b} & \code{\_\_truediv\_\_}, \code{\_\_floordiv\_\_}, \code{\_\_mod\_\_}, \code{\_\_pow\_\_} & a new object \\
+\code{str(a)}, \code{print(a)} & \code{a.\_\_str\_\_()} & \code{str}, for people \\
+\code{repr(a)}, REPL echo & \code{a.\_\_repr\_\_()} & \code{str}, for developers \\
+\code{len(a)} & \code{a.\_\_len\_\_()} & \code{int} \\
+\code{a[i]} & \code{a.\_\_getitem\_\_(i)} & the item \\
+\code{a(x)} & \code{a.\_\_call\_\_(x)} & anything \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Equality, ordering and math}
+
+By default \code{==} on your objects means ``the very same object''. Define \code{\_\_eq\_\_} to compare
+by value. If the other object is a different type, return the special value
+\code{NotImplemented} instead of crashing, and Python tries other options.
+
+\begin{pycode}
+>>> class TokenCount:
+...     def __init__(self, n):
+...         self.n = n
+...     def __eq__(self, other):
+...         if not isinstance(other, TokenCount):
+...             return NotImplemented
+...         return self.n == other.n
+...     def __lt__(self, other):
+...         return self.n < other.n
+...     def __add__(self, other):
+...         return TokenCount(self.n + other.n)
+...     def __repr__(self):
+...         return f"TokenCount({self.n})"
+...     def __str__(self):
+...         return f"{self.n} tokens"
+...
+>>> TokenCount(3) == TokenCount(3), TokenCount(3) == 3
+(True, False)
+>>> TokenCount(2) + TokenCount(3)
+TokenCount(5)
+>>> sorted([TokenCount(5), TokenCount(2), TokenCount(9)])     # uses __lt__
+[TokenCount(2), TokenCount(5), TokenCount(9)]
+\end{pycode}
+
+\begin{trap}[: \code{\_\_eq\_\_} without \code{\_\_hash\_\_}]
+When you define \code{\_\_eq\_\_}, Python removes the default \code{\_\_hash\_\_}, so the objects can no longer
+go in sets or be dict keys. If you need that, define \code{\_\_hash\_\_} as well (on objects that
+never change), or use a frozen dataclass.
+\end{trap}
+
+\begin{pycode}
+>>> {TokenCount(1)}
+Traceback (most recent call last):
+  ...
+TypeError: unhashable type: 'TokenCount'
+\end{pycode}
+
+\subsection{\code{\_\_repr\_\_} and \code{\_\_str\_\_}}
+
+\code{\_\_repr\_\_} is the developer view. The REPL, debuggers and containers use it, and ideally it
+looks like code that could rebuild the object. \code{\_\_str\_\_} is the friendly view for
+\code{print} and f-strings. If you define only one, define \code{\_\_repr\_\_}: \code{str()} falls
+back to it.
+
+\begin{pycode}
+>>> t = TokenCount(7)
+>>> t                          # REPL uses repr
+TokenCount(7)
+>>> print(t)                   # print uses str
+7 tokens
+>>> f"{t}", repr(t)
+('7 tokens', 'TokenCount(7)')
+>>> print([t])                 # inside a list, elements use repr
+[TokenCount(7)]
+\end{pycode}
+
+\subsection{\code{\_\_len\_\_} and \code{\_\_getitem\_\_}: subscript syntax}
+
+\code{obj[i]} is not magic of the language, it just calls \code{\_\_getitem\_\_}. Dicts and lists define it.
+Your classes can too. Defining \code{\_\_len\_\_} also makes an empty object falsy.
+
+\begin{pycode}
+>>> class Transcript:
+...     def __init__(self, messages):
+...         self.messages = list(messages)
+...     def __len__(self):
+...         return len(self.messages)
+...     def __getitem__(self, i):
+...         return self.messages[i]
+...
+>>> tr = Transcript(["hi", "yo", "bye"])
+>>> len(tr), tr[0], tr[-1], tr[0:2]
+(3, 'hi', 'bye', ['hi', 'yo'])
+>>> [m.upper() for m in tr]            # looping works through __getitem__
+['HI', 'YO', 'BYE']
+>>> bool(Transcript([]))
+False
+\end{pycode}
+
+\subsection{\code{\_\_call\_\_}: objects you can call}
+
+If a class defines \code{\_\_call\_\_}, then writing \code{obj(args)} runs \code{type(obj).\_\_call\_\_(obj, args)}.
+The object behaves like a function that also remembers state in its attributes. (A closure
+from the previous chapter does a similar job, but an object lets you inspect and change the state.)
+
+% DIAGRAM-BEGIN d11-call
+\begin{center}
+\begin{tikzpicture}
+  \node[t11name] (a) at (0,0.55) {add\_tag = Prefixer("[INFO] ")};
+  \node[t11name] (b) at (0,-0.55) {add\_tag("started")};
+  \node[t11fn,align=center] (i) at (7.4,0.55) {Prefixer.\_\_init\_\_(add\_tag, "[INFO] ")};
+  \node[t11fn,align=center] (c) at (7.4,-0.55) {Prefixer.\_\_call\_\_(add\_tag, "started")};
+  \draw[t11arr] (a) -- node[above,t11note]{creates the object} (i);
+  \draw[t11arr] (b) -- node[above,t11note]{calls the object} (c);
+\end{tikzpicture}
+\end{center}
+% DIAGRAM-END d11-call
+
+\begin{pycode}
+>>> class Prefixer:
+...     def __init__(self, prefix):
+...         self.prefix = prefix
+...         self.calls = 0
+...     def __call__(self, text):
+...         self.calls += 1
+...         return self.prefix + text
+...
+>>> add_tag = Prefixer("[INFO] ")
+>>> add_tag("started")
+'[INFO] started'
+>>> add_tag("done")
+'[INFO] done'
+>>> add_tag.calls
+2
+>>> callable(add_tag), add_tag.__call__("manual")
+(True, '[INFO] manual')
+>>> list(map(add_tag, ["a", "b"]))        # works anywhere a function does
+['[INFO] a', '[INFO] b']
+\end{pycode}
+
+The same idea gives a class-based decorator: the object is built once with the function, and every
+later call of the decorated name runs \code{\_\_call\_\_}.
+
+\begin{pycode}
+>>> class CountCalls:
+...     def __init__(self, func):
+...         self.func = func
+...         self.count = 0
+...     def __call__(self, *args, **kwargs):
+...         self.count += 1
+...         return self.func(*args, **kwargs)
+...
+>>> @CountCalls
+... def ping():
+...     return "pong"
+...
+>>> ping(), ping()
+('pong', 'pong')
+>>> ping.count
+2
+\end{pycode}
+
+% ------------------------------------------------------------
+\section{Composition and aggregation}
+
+Inheritance says \emph{is-a}. Composition says \emph{has-a}: an object holds other objects as
+attributes and delegates work to them. In composition the parts belong to the whole (a memory
+created for one agent). In aggregation the whole merely uses something that exists independently
+(a client shared by several agents).
+
+% DIAGRAM-BEGIN d11-compose
+\begin{center}
+\begin{tikzpicture}
+  \node[t11cls] (a1) at (0,1.0) {Agent 1};
+  \node[t11cls] (a2) at (0,-1.0) {Agent 2};
+  \node[t11obj] (m1) at (4.6,1.0) {Memory (own)};
+  \node[t11obj] (m2) at (4.6,-1.0) {Memory (own)};
+  \node[t11fn] (cl) at (9.2,0) {shared client};
+  \draw[t11arr] (a1) -- node[above,t11note]{owns} (m1);
+  \draw[t11arr] (a2) -- node[above,t11note]{owns} (m2);
+  \draw[t11arr,dashed] (a1) to[bend left=18] node[above,t11note,sloped]{uses} (cl);
+  \draw[t11arr,dashed] (a2) to[bend right=18] node[below,t11note,sloped]{uses} (cl);
+\end{tikzpicture}
+\end{center}
+% DIAGRAM-END d11-compose
+
+\begin{pycode}
+>>> class Memory:
+...     def __init__(self):
+...         self.items = []
+...     def remember(self, text):
+...         self.items.append(text)
+...
+>>> class Agent:
+...     def __init__(self, client, memory):
+...         self.client = client               # passed in: can be shared
+...         self.memory = memory
+...     def run(self, prompt):
+...         self.memory.remember(prompt)
+...         return self.client.complete(prompt)
+...
+>>> shared = FakeClient()
+>>> a1 = Agent(shared, Memory())
+>>> a2 = Agent(shared, Memory())
+>>> a1.run("hi")
+'canned reply'
+>>> a1.memory.items, a2.memory.items
+(['hi'], [])
+>>> a1.client is a2.client
+True
+\end{pycode}
+
+% ------------------------------------------------------------
+\section{When to use objects or something else}
+
+Use the simplest structure that does the job. A dict, list or tuple is simpler than a class.
+Reach for a class when many pieces of data travel together and have behavior of their own.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X X@{}}
+\toprule
+\textbf{Tool} & \textbf{Good when} & \textbf{Watch out} \\
+\midrule
+\code{dict} & ad-hoc, keys vary, JSON in/out & typos in keys, no structure \\
+\code{tuple} / named tuple & fixed small record, never changes & positions or no behavior \\
+\code{dataclass} & mostly data, you want \code{repr}/\code{==} for free & types are hints only \\
+pydantic model & data from outside (JSON, API) that must be validated & third-party package \\
+plain class & behavior plus state, several methods & more code to write \\
+module & you want exactly one of something & no inheritance \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{keyidea}
+You can write plenty of useful Python without defining a class. But you will \emph{use} classes
+constantly: API clients, response objects and data models are all classes written by others.
+\end{keyidea}
+
+% ------------------------------------------------------------
+\section{Named tuples}
+
+A named tuple is a tuple whose positions also have names. It is immutable, lightweight, and
+works as a dict key. You get it from \code{collections.namedtuple}.
+
+\begin{pycode}
+>>> from collections import namedtuple
+>>> Usage = namedtuple("Usage", "input_tokens output_tokens")
+>>> u = Usage(120, 30)
+>>> u
+Usage(input_tokens=120, output_tokens=30)
+>>> u.input_tokens, u[1]                   # by name or by position
+(120, 30)
+>>> inp, out = u                           # unpacks like any tuple
+>>> u._replace(output_tokens=99)           # "changes" it by making a new one
+Usage(input_tokens=120, output_tokens=99)
+>>> u._asdict()
+{'input_tokens': 120, 'output_tokens': 30}
+>>> Usage(**{"input_tokens": 1, "output_tokens": 2})
+Usage(input_tokens=1, output_tokens=2)
+>>> u.input_tokens = 5
+Traceback (most recent call last):
+  ...
+AttributeError: can't set attribute
+\end{pycode}
+
+% ------------------------------------------------------------
+\section{Dataclasses}
+
+A dataclass is a normal class where Python writes \code{\_\_init\_\_}, \code{\_\_repr\_\_} and
+\code{\_\_eq\_\_} for you from a list of annotated fields. You write the fields as
+\code{name: type} or \code{name: type = default}. The decorator does the rest.
+
+% DIAGRAM-BEGIN d11-dataclass
+\begin{center}
+\begin{tikzpicture}
+  \node[t11cls,align=left] (src) at (0,0) {@dataclass\\[-1pt]class Message:\\[-1pt]\ \ \ \ role: str\\[-1pt]\ \ \ \ content: str};
+  \node[t11fn,align=left] (g1) at (7.4,0.9) {\_\_init\_\_(self, role, content)};
+  \node[t11fn,align=left] (g2) at (7.4,0) {\_\_repr\_\_ : Message(role='user', ...)};
+  \node[t11fn,align=left] (g3) at (7.4,-0.9) {\_\_eq\_\_ : compares the fields as a tuple};
+  \foreach \i in {1,2,3} \draw[t11arr] (src.east) -- (g\i.west);
+  \node[t11note] at (3.0,1.1) {Python writes};
+\end{tikzpicture}
+\end{center}
+% DIAGRAM-END d11-dataclass
+
+\begin{pycode}
+>>> from dataclasses import dataclass, field, asdict, replace
+>>> @dataclass
+... class Message:
+...     role: str
+...     content: str
+...
+>>> m = Message("user", "Hi")
+>>> m
+Message(role='user', content='Hi')
+>>> m.content = "Yo"                       # mutable by default
+>>> m == Message("user", "Yo")             # equal fields, so equal
+True
+>>> m is Message("user", "Yo")             # but a different object
+False
+>>> asdict(m)
+{'role': 'user', 'content': 'Yo'}
+>>> replace(m, content="Bye")              # a modified copy
+Message(role='user', content='Bye')
+\end{pycode}
+
+To see what the decorator saved you, here is the hand-written equivalent of the first two
+methods. This is how \code{\_\_init\_\_}, \code{\_\_repr\_\_} and \code{\_\_eq\_\_} work in any class.
+
+\begin{pycode}
+>>> class MessageByHand:
+...     def __init__(self, role, content):
+...         self.role = role
+...         self.content = content
+...     def __repr__(self):
+...         return (f"MessageByHand(role={self.role!r}, "
+...                 f"content={self.content!r})")
+...     def __eq__(self, other):
+...         if other.__class__ is not self.__class__:
+...             return NotImplemented
+...         return (self.role, self.content) == (other.role, other.content)
+...
+>>> MessageByHand("user", "Hi")
+MessageByHand(role='user', content='Hi')
+>>> MessageByHand("user", "Hi") == MessageByHand("user", "Hi")
+True
+\end{pycode}
+
+\subsection{Defaults, options and validation}
+
+\begin{trap}[: mutable defaults need \code{default\_factory}]
+Writing \code{messages: list = []} would share one list between all instances, so dataclasses
+refuse it. Use \code{field(default\_factory=list)} to build a fresh list per instance.
+\end{trap}
+
+\begin{pycode}
+>>> @dataclass
+... class Chat:
+...     model: str
+...     system: str = ""
+...     messages: list = field(default_factory=list)
+...
+>>> Chat("small-fast")
+Chat(model='small-fast', system='', messages=[])
+>>> @dataclass
+... class Oops:
+...     items: list = []
+...
+Traceback (most recent call last):
+  ...
+ValueError: mutable default <class 'list'> for field items is not allowed:
+use default_factory
+\end{pycode}
+
+\code{@dataclass(frozen=True)} makes instances immutable (and hashable). \code{order=True} adds
+\code{<} and friends that compare the fields in order. \code{\_\_post\_init\_\_} runs right after the
+generated \code{\_\_init\_\_}, a good place for checks. \code{field(repr=False)} keeps a value out of the
+\code{repr}.
+
+\begin{pycode}
+>>> @dataclass(frozen=True, order=True)
+... class Version:
+...     major: int
+...     minor: int
+...     def __post_init__(self):
+...         if self.minor < 0:
+...             raise ValueError("minor must be >= 0")
+...
+>>> Version(1, 2) < Version(1, 10)
+True
+>>> v = Version(1, 2)
+>>> v.minor = 3
+Traceback (most recent call last):
+  ...
+dataclasses.FrozenInstanceError: cannot assign to field 'minor'
+>>> {v: "ok"}                             # frozen means hashable
+{Version(major=1, minor=2): 'ok'}
+>>> @dataclass
+... class Credentials:
+...     user: str
+...     api_key: str = field(repr=False)   # never shows up in logs
+...
+>>> Credentials("ana", "sk-secret")
+Credentials(user='ana')
+\end{pycode}
+
+\begin{trap}[: annotations are not enforced]
+The \code{str} in \code{role: str} is only a hint. A dataclass accepts \code{Message(1, None)}
+without complaint. Enforcing types is what validation libraries such as pydantic do.
+\end{trap}
+
+% ------------------------------------------------------------
+\section{Nested objects, and attribute versus subscript access}
+
+Real API data is nested: a reply holds usage numbers, content blocks and so on. You can model
+that by letting one dataclass field hold another dataclass. Reading a deep value is a chain of
+dots.
+
+% DIAGRAM-BEGIN d11-nested
+\begin{center}
+\begin{tikzpicture}[lv/.style={draw=cgray,fill=white,rounded corners=2pt,inner sep=3pt,font=\ttfamily\footnotesize}]
+  \node[t11obj] (r) at (0,0) {reply : Reply};
+  \node[lv] (m) at (4.2,1.0) {model = "small-fast"};
+  \node[lv] (t) at (4.2,0.3) {text = "Hi!"};
+  \node[t11obj] (u) at (4.2,-0.6) {usage : Usage};
+  \node[lv] (i) at (8.6,-0.2) {input\_tokens = 12};
+  \node[lv,draw=cgreen,fill=cgreen!12] (o) at (8.6,-1.0) {output\_tokens = 3};
+  \draw[t11arr] (r.east) -- (m.west);
+  \draw[t11arr] (r.east) -- (t.west);
+  \draw[t11arr] (r.east) -- (u.west);
+  \draw[t11arr] (u.east) -- (i.west);
+  \draw[t11arr,cgreen] (u.east) -- (o.west);
+  \node[t11note] at (6.0,-1.9) {path to the green box:  \code{reply.usage.output\_tokens}  (one dot per level)};
+\end{tikzpicture}
+\end{center}
+% DIAGRAM-END d11-nested
+
+\begin{pycode}
+>>> @dataclass
+... class Usage:
+...     input_tokens: int
+...     output_tokens: int
+...
+>>> @dataclass
+... class Reply:
+...     model: str
+...     text: str
+...     usage: Usage                       # a field that holds another object
+...
+>>> reply = Reply("small-fast", "Hi!", Usage(12, 3))
+>>> reply.usage.output_tokens
+3
+>>> asdict(reply)                          # nested objects become dicts
+{'model': 'small-fast', 'text': 'Hi!',
+ 'usage': {'input_tokens': 12, 'output_tokens': 3}}
+>>> reply["text"]
+Traceback (most recent call last):
+  ...
+TypeError: 'Reply' object is not subscriptable
+\end{pycode}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X X@{}}
+\toprule
+ & \textbf{attribute: \code{obj.x}} & \textbf{subscript: \code{d["x"]}} \\
+\midrule
+Works on & instances of classes, dataclasses, models & dicts, lists, tuples, anything with \code{\_\_getitem\_\_} \\
+Missing name & \code{AttributeError} & \code{KeyError} (dict) or \code{IndexError} (list) \\
+Name or key is a variable & \code{getattr(obj, name)} & \code{d[name]} \\
+Typical source & your own classes, SDK response objects & parsed JSON (\code{json.loads}) \\
+Nested read & \code{reply.usage.output\_tokens} & \code{data["usage"]["output\_tokens"]} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{From a dict to nested objects}
+
+JSON gives you nested dicts. Passing it straight to a dataclass with \code{**} only converts the
+\emph{top} level. The inner dict stays a dict, and dot access then fails.
+
+\begin{pycode}
+>>> data = {"model": "small-fast", "text": "Hi!",
+...         "usage": {"input_tokens": 12, "output_tokens": 3}}
+>>> data["usage"]["output_tokens"]
+3
+>>> half = Reply(**data)                   # usage is still a plain dict
+>>> half.usage.output_tokens
+Traceback (most recent call last):
+  ...
+AttributeError: 'dict' object has no attribute 'output_tokens'
+>>> full = Reply(data["model"], data["text"], Usage(**data["usage"]))
+>>> full.usage.output_tokens
+3
+>>> full == reply
+True
+\end{pycode}
+
+Writing that conversion for every nested level is tedious. A validation library does it for you.
+\textbf{pydantic} (a third-party package, installed with \code{pip install pydantic}) builds
+nested models from nested dicts, converts compatible values, and raises a clear error otherwise.
+Many LLM SDKs return pydantic objects, so \code{response.usage.input\_tokens} is exactly this pattern.
+
+\begin{pycode}
+from pydantic import BaseModel, ValidationError
+
+class UsageM(BaseModel):
+    input_tokens: int
+    output_tokens: int
+
+class ReplyM(BaseModel):
+    model: str
+    text: str
+    usage: UsageM
+
+data = {"model": "small-fast", "text": "Hi!",
+        "usage": {"input_tokens": "12", "output_tokens": 3}}
+r = ReplyM.model_validate(data)        # nested dict -> nested objects
+print(r.usage.input_tokens, type(r.usage).__name__)
+print(r.model_dump())                  # back to plain dicts
+try:
+    ReplyM.model_validate({"model": "m", "text": "t"})
+except ValidationError as exc:
+    print(exc.error_count(), "error:", exc.errors()[0]["loc"])
+\end{pycode}
+\begin{rawcode}
+12 UsageM
+{'model': 'small-fast', 'text': 'Hi!',
+ 'usage': {'input_tokens': 12, 'output_tokens': 3}}
+1 error: ('usage',)
+\end{rawcode}
+
+Note the string \code{"12"} became the integer \code{12}, and a missing \code{usage} was reported by name.
+This block needs the \code{pydantic} package.
+
+\begin{typecheck}
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+\textbf{Expression} & \textbf{Type} & \textbf{Note} \\
+\midrule
+\code{r} & \code{ReplyM} & attributes, no \code{["..."]} \\
+\code{r.usage} & \code{UsageM} & a nested model object \\
+\code{r.usage.input\_tokens} & \code{int} & converted from \code{"12"} \\
+\code{r.model\_dump()} & \code{dict} & plain nested dicts, ready for \code{json.dumps} \\
+\bottomrule
+\end{tabularx}
+\end{typecheck}
+
+% ------------------------------------------------------------
+\section{attrs}
+
+\code{attrs} is a third-party library that predates dataclasses. It offers the same ``write the
+fields, get the methods'' idea plus validators and converters. It is optional reading: dataclasses
+cover most needs, and pydantic covers validation. If you meet \code{@attrs.define} in someone's
+code, read it as a dataclass with extras.
+
+\begin{pycode}
+# needs: pip install attrs   (not run here: package not installed)
+import attrs
+
+@attrs.define
+class Msg:
+    role: str
+    content: str = attrs.field(validator=attrs.validators.instance_of(str))
+\end{pycode}
+
+% ------------------------------------------------------------
+\begin{boss}[: three different ``calls'' that look alike]
+\code{Cls(...)}, \code{obj.method(...)} and \code{obj(...)} all use parentheses, but Python does
+a different thing each time. If you can say which row you are in, \code{self}, \code{\_\_init\_\_}
+and \code{\_\_call\_\_} stop being confusing.
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+\textbf{You write} & \textbf{Python does} & \textbf{\code{self} is} \\
+\midrule
+\code{Cls(a)} & builds a blank object, then runs \code{Cls.\_\_init\_\_(new, a)} & the new blank object \\
+\code{obj.m(a)} & finds \code{m} on the class, runs \code{Cls.m(obj, a)} & \code{obj} \\
+\code{obj(a)} & runs \code{Cls.\_\_call\_\_(obj, a)} & \code{obj} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{boss}
+
+\begin{pycode}
+class Tracer:
+    def __init__(self, label):
+        print("__init__ runs, self is the new object, label =", label)
+        self.label = label
+
+    def method(self, x):
+        print("method runs, self.label =", self.label, "| x =", x)
+
+    def __call__(self, x):
+        print("__call__ runs, self.label =", self.label, "| x =", x)
+
+t = Tracer("T")          # row 1
+t.method(1)              # row 2
+t(2)                     # row 3
+print(t.method.__self__ is t)
+\end{pycode}
+\begin{rawcode}
+__init__ runs, self is the new object, label = T
+method runs, self.label = T | x = 1
+__call__ runs, self.label = T | x = 2
+True
+\end{rawcode}
+
+% ------------------------------------------------------------
+\begin{practice}
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+\item Write a class \code{PromptTemplate} whose \code{\_\_init\_\_} takes a template string with
+  \code{\{name\}} placeholders, and a method \code{render(**values)} that fills them in. Then make
+  instances callable with \code{\_\_call\_\_} so \code{tpl(name="Ana")} works too.
+\item Explain in your own words what \code{self} is, and show two ways to call the same method
+  (one through the instance, one through the class).
+\item Given \code{class A:\ items = []}, why do two instances share the list? Rewrite the class so each
+  instance gets its own.
+\item Make a \code{Temperature} class with a property \code{celsius} (stored) and a read-only
+  property \code{fahrenheit} (computed). What error do you get when you assign to
+  \code{fahrenheit}?
+\item Write two dataclasses, \code{Author} and \code{Book}, where \code{Book} has an \code{Author}
+  field. Build a \code{Book} from a nested dict, then print \code{asdict(book)}. Why does
+  \code{Book(**data)} alone not give you an \code{Author} object?
+\item Add \code{\_\_eq\_\_} and \code{\_\_repr\_\_} to a small class by hand, then rewrite it as a dataclass.
+  What do you get for free, and what is still up to you?
+\end{enumerate}
+\end{practice}
+
+\begin{achievement}{Object Builder}
+You can now:
+\begin{itemize}[leftmargin=*,itemsep=1pt]
+\item write classes with \code{\_\_init\_\_}, \code{self}, methods, properties and class attributes,
+  and say how each lookup works;
+\item reuse code with inheritance, \code{super()} and composition, and know when to prefer which;
+\item make objects work with \code{==}, \code{print}, \code{len}, \code{[]} and \code{()};
+\item model data with named tuples and dataclasses, including nested objects and validation with
+  pydantic.
+\end{itemize}
+\end{achievement}

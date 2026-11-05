@@ -1,0 +1,824 @@
+% ============================================================
+%  Book chapter 20: Files
+% ============================================================
+\chapter{Files}
+
+\textbf{What this chapter gives you:} how to open, read, write and close files safely, how to jump
+around inside a file, and how to find, copy, move and name files and folders. You will use this
+for JSONL eval sets, logs, model outputs, checkpoints and config files. You also meet
+\code{StringIO} and \code{BytesIO}, which make memory behave like a file.
+
+\tikzset{c20n/.style={draw=#1,fill=#1!10,rounded corners=3pt,minimum height=8mm,inner sep=4pt,
+    font=\ttfamily\small},
+  c20c/.style={draw=cgray,minimum width=7mm,minimum height=7mm,inner sep=0pt,font=\ttfamily\small}}
+
+% ------------------------------------------------------------
+\section{Files and directories}
+
+A \emph{file} is a sequence of bytes stored under a name. A \emph{directory} (folder) holds files
+and other directories, so the whole thing forms a tree. Text and bytes are the same on disk. The
+only difference is whether Python decodes the bytes into \code{str} for you.
+
+\begin{center}
+\begin{tikzpicture}[>=Stealth,level distance=9mm,
+    every node/.style={font=\ttfamily\small},
+    d/.style={draw=cblue,fill=cblue!10,rounded corners=2pt,inner sep=3pt},
+    f/.style={draw=cgray,fill=white,rounded corners=2pt,inner sep=3pt}]
+  \node[d] (root) at (0,0) {project/};
+  \node[d] (data) at (3.2,0.9) {data/};
+  \node[d] (runs) at (3.2,-0.9) {runs/};
+  \node[f] (a) at (6.6,1.5) {train.jsonl};
+  \node[f] (b) at (6.6,0.7) {eval.jsonl};
+  \node[f] (c) at (6.6,-0.5) {run-001.log};
+  \node[f] (e) at (6.6,-1.3) {run-002.log};
+  \draw[cgray] (root.east) -- (data.west);
+  \draw[cgray] (root.east) -- (runs.west);
+  \draw[cgray] (data.east) -- (a.west);
+  \draw[cgray] (data.east) -- (b.west);
+  \draw[cgray] (runs.east) -- (c.west);
+  \draw[cgray] (runs.east) -- (e.west);
+  \node[font=\sffamily\scriptsize,text=cblue,anchor=west] at (8.3,0.9) {directories};
+  \node[font=\sffamily\scriptsize,text=cgray,anchor=west] at (8.3,-0.5) {files (leaves)};
+\end{tikzpicture}
+\end{center}
+% MD-BEGIN
+% ```text
+% project/
+% ├── data/
+% │   ├── train.jsonl
+% │   └── eval.jsonl
+% └── runs/
+%     ├── run-001.log
+%     └── run-002.log
+% ```
+% MD-END
+
+% ------------------------------------------------------------
+\section{File Input and Output}
+
+\subsection{Create or open with open()}
+
+\code{open(name, mode)} returns a \emph{file object}. It is your handle on the file: you call
+methods on it to read and write. When you are done you must close it, so that buffered writes
+reach the disk.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X l l l@{}}
+\toprule
+\textbf{Mode} & \textbf{Meaning} & \textbf{File must exist?} & \textbf{Erases old content?} & \textbf{Pointer starts} \\
+\midrule
+\code{"r"} & read (default) & yes & no & start \\
+\code{"w"} & write & no, created & \textbf{yes} & start \\
+\code{"x"} & write, but only if new & must \emph{not} exist & -- & start \\
+\code{"a"} & append & no, created & no & end \\
+\code{"r+"} & read and write & yes & no & start \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+A second letter picks the kind: \code{t} for text (the default) or \code{b} for bytes. So
+\code{"wb"} is write-bytes and \code{"rt"} is the same as \code{"r"}.
+
+\begin{center}
+\begin{tikzpicture}[>=Stealth]
+  \node[c20n=cgreen,align=center] (m) at (0,0) {Python\\[-1pt]{\scriptsize\sffamily str in memory}};
+  \node[c20n=cgray,align=center] (d) at (7.5,0) {file on disk\\[-1pt]{\scriptsize\sffamily bytes}};
+  \draw[->,thick] ([yshift=2mm]m.east) -- node[above,font=\ttfamily\scriptsize]{write() = encode} ([yshift=2mm]d.west);
+  \draw[->,thick] ([yshift=-2mm]d.west) -- node[below,font=\ttfamily\scriptsize]{read() = decode} ([yshift=-2mm]m.east);
+  \node[font=\sffamily\scriptsize,text=cgray] at (3.75,-1.0) {text mode does the encoding for you; binary mode skips it};
+\end{tikzpicture}
+\end{center}
+% MD-BEGIN
+% ```mermaid
+% flowchart LR
+%     M["Python str (memory)"] -- "write() = encode" --> D["file on disk (bytes)"]
+%     D -- "read() = decode" --> M
+% ```
+% *Text mode does the encoding for you; binary mode skips it.*
+% MD-END
+
+\begin{pycode}
+f = open("notes.txt", "w", encoding="utf-8", newline="\n")
+print(type(f))
+n = f.write("line one\nline two\nline three\n")
+print(n)
+f.close()
+print(f.closed)
+\end{pycode}
+\begin{rawcode}
+<class '_io.TextIOWrapper'>
+29
+True
+\end{rawcode}
+
+\begin{typecheck}
+\code{open(..., "w")} returns a \code{TextIOWrapper}, and \code{open(..., "wb")} returns a
+\code{BufferedWriter}. They are not strings. \code{write()} returns how many characters (text
+mode) or bytes (binary mode) it wrote, and it adds nothing: no space, no newline. A closed
+file object still exists, but using it raises \code{ValueError}.
+\end{typecheck}
+
+\begin{gamerule}
+Always pass \code{encoding="utf-8"} in text mode. If you leave it out, Python uses the system
+default, which on many Windows machines is a legacy code page, so the same script can write
+different bytes on different computers.
+\end{gamerule}
+
+\begin{trap}
+Mode \code{"w"} destroys the old content the moment you open the file, before you write anything.
+A typo in the filename can wipe an important file. Use \code{"x"} when the file must be new, and
+\code{"a"} to add to the end (for example, a log or a JSONL results file).
+\end{trap}
+
+\subsection{with: close files automatically}
+
+Writing \code{f.close()} by hand is easy to forget, and it is skipped if an error happens in the
+middle. A \code{with} block closes the file for you when the block ends, normally or by an
+exception.
+
+\begin{center}
+\begin{tikzpicture}[>=Stealth]
+  \node[c20n=cgreen] (o) at (0,0) {open()};
+  \node[c20n=cblue] (b) at (4.2,0) {your code runs};
+  \node[c20n=cred] (c) at (8.4,0) {close()};
+  \draw[->,thick] (o) -- (b);
+  \draw[->,thick] (b) -- node[above,font=\sffamily\scriptsize]{block ends} (c);
+  \draw[->,thick,cgold,rounded corners=3pt] (b.south) -- ++(0,-0.7) -| node[pos=0.25,below,font=\sffamily\scriptsize,text=ink]{or an error is raised} (c.south);
+  \draw[decorate,decoration={brace,mirror,amplitude=4pt},cgray] (-0.9,-1.85) -- node[below=4pt,font=\sffamily\scriptsize,text=ink]{\code{with open(...) as f:} manages all of this} (9.4,-1.85);
+\end{tikzpicture}
+\end{center}
+% MD-BEGIN
+% ```mermaid
+% flowchart LR
+%     O["open()"] --> B["your code runs"]
+%     B -- "block ends" --> C["close()"]
+%     B -- "or an error is raised" --> C
+% ```
+% *`with open(...) as f:` manages all of this.*
+% MD-END
+
+\begin{pycode}
+with open("notes.txt", "a", encoding="utf-8", newline="\n") as f:
+    print("line four", file=f)
+    f.write("line five\n")
+print(f.closed)
+with open("notes.txt", encoding="utf-8") as f:
+    text = f.read()
+print(type(text), len(text))
+print(text, end="")
+\end{pycode}
+\begin{rawcode}
+True
+<class 'str'> 49
+line one
+line two
+line three
+line four
+line five
+\end{rawcode}
+
+Two ways to write text: \code{f.write(s)} writes exactly \code{s}. \code{print(s, file=f)} is
+\code{print} aimed at a file, so it adds a newline unless you pass \code{end=""}. It also joins
+several arguments with spaces unless you change \code{sep}.
+
+\subsection{Read a text file}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+\textbf{Call} & \textbf{Returns} & \textbf{Memory use} \\
+\midrule
+\code{f.read()} & one \code{str}, the whole file & whole file in memory \\
+\code{f.read(n)} & next \code{n} characters & small, you choose \\
+\code{f.readline()} & one line, with its \code{\textbackslash n} & one line \\
+\code{f.readlines()} & \code{list} of all lines & whole file in memory \\
+\code{for line in f:} & one line at a time & one line; best for big files \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+At the end of the file, \code{read()} and \code{readline()} return an empty string \code{""}.
+That is how you detect the end. A blank line in the middle is \code{"\textbackslash n"}, which is
+not empty, so it is still truthy.
+
+\begin{pycode}
+with open("notes.txt", encoding="utf-8") as f:
+    print(repr(f.readline()))
+    print(repr(f.read(4)))
+    print(repr(f.read()))
+    print(repr(f.read()), repr(f.readline()))
+with open("notes.txt", encoding="utf-8") as f:
+    lines = f.readlines()
+print(len(lines), repr(lines[0]), repr(lines[-1]))
+with open("notes.txt", encoding="utf-8") as f:
+    for i, line in enumerate(f, 1):
+        print(i, line.rstrip("\n"))
+\end{pycode}
+\begin{rawcode}
+'line one\n'
+'line'
+' two\nline three\nline four\nline five\n'
+'' ''
+5 'line one\n' 'line five\n'
+1 line one
+2 line two
+3 line three
+4 line four
+5 line five
+\end{rawcode}
+
+\begin{typecheck}
+A file object is its own iterator: \code{iter(f) is f}. Looping over it yields \code{str} lines
+\emph{including} the trailing newline, so you often write \code{line.rstrip("\textbackslash n")}.
+Because it is an iterator, you can use it once. A second loop over the same open file yields
+nothing, since the pointer is already at the end.
+\end{typecheck}
+
+\begin{gamerule}
+For anything that could be large (logs, datasets), loop over the file object. Do not call
+\code{read()} or \code{readlines()}: a 5 GB file would need 5 GB of memory.
+\end{gamerule}
+
+\subsubsection*{Example: JSONL, one JSON object per line}
+
+JSONL is the common format for eval sets and fine-tuning data: each line is a complete JSON
+document. Write with \code{json.dumps(obj) + "\textbackslash n"}, read with \code{json.loads(line)}.
+
+\begin{pycode}
+import json
+
+rows = [{"id": 1, "score": 0.5}, {"id": 2, "score": 0.75}]
+with open("out.jsonl", "w", encoding="utf-8", newline="\n") as f:
+    for r in rows:
+        f.write(json.dumps(r) + "\n")
+with open("out.jsonl", "rb") as f:
+    print(f.read())
+with open("out.jsonl", encoding="utf-8") as f:
+    back = [json.loads(line) for line in f]
+print(back == rows, type(back[0]))
+with open("out.jsonl", encoding="utf-8") as f:
+    print(sum(json.loads(line)["score"] for line in f if line.strip()))
+\end{pycode}
+\begin{rawcode}
+b'{"id": 1, "score": 0.5}\n{"id": 2, "score": 0.75}\n'
+True <class 'dict'>
+1.25
+\end{rawcode}
+
+The last loop streams the file and keeps one line in memory at a time, so it scales to files much
+bigger than RAM.
+
+\subsection{Errors you will meet}
+
+\begin{pycode}
+try:
+    open("notes.txt", "x", encoding="utf-8")
+except FileExistsError as e:
+    print("FileExistsError", e.errno)
+try:
+    open("missing.txt", encoding="utf-8")
+except FileNotFoundError as e:
+    print("FileNotFoundError:", e.strerror)
+with open("cafe.txt", "w", encoding="utf-8") as f:
+    f.write("caf\u00e9\n")
+try:
+    with open("cafe.txt", encoding="ascii") as f:
+        f.read()
+except UnicodeDecodeError as e:
+    print("UnicodeDecodeError:", e.reason)
+\end{pycode}
+\begin{rawcode}
+FileExistsError 17
+FileNotFoundError: No such file or directory
+UnicodeDecodeError: ordinal not in range(128)
+\end{rawcode}
+
+The error text for a missing file differs between operating systems, but the exception class
+does not. Catch the class. The third error is the str/bytes border from the Text Data chapter
+again: you told Python the bytes were ASCII, but the file is UTF-8.
+
+\subsection{Newlines}
+
+Lines end with \code{"\textbackslash n"} on Linux and macOS and \code{"\textbackslash r\textbackslash n"} on Windows. In text mode Python translates for you:
+reading turns any ending into \code{"\textbackslash n"}, and writing turns \code{"\textbackslash n"} into the platform's ending
+unless you pass \code{newline}.
+
+\begin{pycode}
+with open("a.txt", "w", newline="") as f:        # no translation
+    f.write("a\nb\n")
+with open("b.txt", "w", newline="\r\n") as f:    # force Windows endings
+    f.write("a\nb\n")
+print(open("a.txt", "rb").read(), open("b.txt", "rb").read())
+print(open("b.txt", encoding="utf-8").read().splitlines())
+\end{pycode}
+\begin{rawcode}
+b'a\nb\n' b'a\r\nb\r\n'
+['a', 'b']
+\end{rawcode}
+
+\subsection{Binary files and seek()}
+
+Add \code{b} to the mode and you get \code{bytes} back, with no decoding and no newline
+translation. Use it for images, model weights, pickles and anything that is not text.
+
+\begin{pycode}
+data = bytes(range(256))
+with open("b.bin", "wb") as f:
+    print(f.write(data))
+with open("b.bin", "rb") as f:
+    raw = f.read()
+print(type(raw), len(raw), raw[:4])
+\end{pycode}
+\begin{rawcode}
+256
+<class 'bytes'> 256 b'\x00\x01\x02\x03'
+\end{rawcode}
+
+A file object remembers a \emph{position} (a pointer). Every \code{read} and \code{write} starts at
+the pointer and moves it forward. \code{tell()} reports it, \code{seek(offset, origin)} moves it.
+The position counts \emph{bytes} from the start of the file.
+
+\begin{center}
+\begin{tikzpicture}[>=Stealth]
+  \foreach \i in {0,...,9} \node[c20c] (c\i) at (\i*0.75,0) {\i};
+  \node[font=\sffamily\scriptsize,anchor=east] at (-0.5,0) {byte offset};
+  \node[font=\sffamily\scriptsize,text=cgray] at (6.75,0.6) {...};
+  % pointer after read(3)
+  \draw[->,thick,cgreen] (2.625,-1.0) -- (2.625,-0.4);
+  \node[font=\ttfamily\scriptsize,text=cgreen!60!black,anchor=north] at (2.625,-1.0) {after read(3): tell() = 3};
+  \node[font=\sffamily\scriptsize,text=cgray,anchor=west] at (7.4,0.0) {file length N};
+\end{tikzpicture}
+\end{center}
+% MD-BEGIN
+% ```text
+% offset :   0   1   2   3   4   5   6   7   8   9  ...
+% bytes  : [00][01][02][03][04][05][06][07][08][09] ...
+%                         ^
+%                         pointer after read(3)  -> tell() == 3
+% ```
+% MD-END
+
+\begin{center}
+\begin{tikzpicture}[>=Stealth]
+  \foreach \i in {0,...,9} \node[c20c] (c\i) at (\i*0.75,0) {};
+  \node[font=\sffamily\scriptsize,anchor=east] at (-0.5,0) {file};
+  \node[font=\ttfamily\scriptsize,text=cblue] at (0,0.75) {start};
+  \node[font=\ttfamily\scriptsize,text=cred] at (6.75,0.75) {end};
+  \draw[->,thick,cblue] (0,-0.5) -- node[below,font=\ttfamily\scriptsize]{seek(3, 0)} (2.25,-0.5);
+  \draw[->,thick,cgreen] (2.25,-1.2) -- node[below,font=\ttfamily\scriptsize]{seek(2, 1)} (3.75,-1.2);
+  \draw[->,thick,cred] (6.75,-1.9) -- node[below,font=\ttfamily\scriptsize]{seek(-3, 2)} (4.5,-1.9);
+  \node[font=\sffamily\scriptsize,anchor=west,text=cblue] at (7.5,-0.5) {0 = from the start};
+  \node[font=\sffamily\scriptsize,anchor=west,text=cgreen!60!black] at (7.5,-1.2) {1 = from the current position};
+  \node[font=\sffamily\scriptsize,anchor=west,text=cred] at (7.5,-1.9) {2 = from the end (offset is negative)};
+\end{tikzpicture}
+\end{center}
+% MD-BEGIN
+% ```text
+%         start                                    end
+% offset:   0  1  2  3  4  5  6  7  8  9 (N=10)
+%
+% seek(3, 0)   -> position 3          0 = from the start (os.SEEK_SET)
+% seek(2, 1)   -> current + 2         1 = from the current position (os.SEEK_CUR)
+% seek(-3, 2)  -> end - 3 = 7         2 = from the end, offset negative (os.SEEK_END)
+% ```
+% MD-END
+
+\begin{pycode}
+import os
+
+with open("b.bin", "rb") as f:
+    print(f.tell(), f.seek(255), f.read(), f.tell())
+    print(f.seek(-1, os.SEEK_END), f.read(1))
+    print(f.seek(10), f.seek(5, os.SEEK_CUR), f.read(3))
+print(os.SEEK_SET, os.SEEK_CUR, os.SEEK_END)
+\end{pycode}
+\begin{rawcode}
+0 255 b'\xff' 256
+255 b'\xff'
+10 15 b'\x0f\x10\x11'
+0 1 2
+\end{rawcode}
+
+\code{seek} returns the new position. Reading the last byte of a huge file this way is instant,
+because nothing before it is read.
+
+\begin{trap}
+In text mode, \code{seek} and \code{tell} work with opaque numbers. Only \code{seek(0)} and values
+that \code{tell()} gave you are safe. With UTF-8, one character can be several bytes, so ``go to
+character 100'' is not ``go to byte 100''. For arbitrary jumps, open the file in binary mode.
+\end{trap}
+
+\begin{boss}[: the file pointer]
+A file object is not the file. It is a cursor plus a buffer. Reading moves the cursor, so the
+\emph{same} file object returns different data on each call, and returns nothing once it is at
+the end. Writing in mode \code{"w"} erases first, then moves forward. Most confusing file bugs
+come from forgetting where the cursor is: a second \code{read()} that returns \code{""}, a loop
+over a file that runs only once, or a write that overwrote the start because of \code{"r+"} and
+no \code{seek}. When in doubt, print \code{f.tell()}.
+\end{boss}
+
+\subsection{Memory mapping}
+
+The standard \code{mmap} module can map a file into memory so that it looks like a
+\code{bytearray}: you slice it and search it, and the operating system loads pages on demand.
+It helps for very large binary files you need random access to. For everyday work, plain
+\code{open} is enough.
+
+% ------------------------------------------------------------
+\section{File Operations}
+
+Python's names come from Unix. The \code{os}, \code{os.path} and \code{shutil} modules hold the
+functions. The newer \code{pathlib} module (later in this chapter) does the same jobs with
+objects.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+\textbf{Task} & \textbf{Function} & \textbf{Returns / note} \\
+\midrule
+exists? & \code{os.path.exists(p)} & \code{bool}; works for files and directories \\
+is a file? & \code{os.path.isfile(p)} & \code{bool} \\
+is a directory? & \code{os.path.isdir(p)} & \code{bool} \\
+is it absolute? & \code{os.path.isabs(p)} & \code{bool}; does not check the disk \\
+size & \code{os.path.getsize(p)} & \code{int} bytes \\
+copy & \code{shutil.copy(src, dst)} & returns the destination path \\
+move or rename & \code{os.rename(a, b)}, \code{shutil.move} & \code{move} also works across disks \\
+delete a file & \code{os.remove(p)} & permanent; no recycle bin \\
+hard / soft link & \code{os.link}, \code{os.symlink} & Unix concepts; \code{islink()} tests \\
+permissions & \code{os.chmod(p, mode)} & Unix; \code{0o400} = owner can read only \\
+owner & \code{os.chown(p, uid, gid)} & Unix only \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{pycode}
+import shutil
+
+with open("oops.txt", "w", encoding="utf-8", newline="\n") as f:
+    f.write("hello\n")
+print(os.path.exists("oops.txt"), os.path.exists("waffles"))
+print(os.path.exists("."))
+print(os.path.isfile("oops.txt"), os.path.isdir("oops.txt"), os.path.isdir("."))
+print(os.path.isabs("oops.txt"), os.path.isabs(os.path.abspath("oops.txt")))
+print(shutil.copy("oops.txt", "copy.txt"))
+os.rename("copy.txt", "renamed.txt")
+print(sorted(x for x in os.listdir(".") if x.endswith(".txt")))
+os.remove("renamed.txt")
+print(os.path.exists("renamed.txt"), os.path.getsize("oops.txt"))
+\end{pycode}
+\begin{rawcode}
+True False
+True
+True False True
+False True
+copy.txt
+['a.txt', 'b.txt', 'cafe.txt', 'notes.txt', 'oops.txt', 'renamed.txt']
+False 6
+\end{rawcode}
+
+\emph{Links.} A \emph{hard link} is a second name for the same bytes on disk. A \emph{symbolic link}
+is a small file that points to another path. \code{os.symlink} needs special rights on Windows,
+so it is not run here. \code{chmod} and \code{chown} are for Unix-like systems. A typical call is
+\code{os.chmod("secrets.txt", 0o600)} so that only you can read your key file.
+
+\begin{trap}
+\code{os.remove} and \code{shutil.rmtree} delete for good. \code{os.rename} silently
+overwrites an existing destination on Unix. Check with \code{os.path.exists} first, or write to a
+temporary name and then \code{Path.replace()} into place, which swaps the file in one step.
+\end{trap}
+
+% ------------------------------------------------------------
+\section{Directory Operations}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+\textbf{Task} & \textbf{Function} & \textbf{Note} \\
+\midrule
+create & \code{os.mkdir(d)} & one level; \code{FileExistsError} if present \\
+create nested & \code{os.makedirs(d, exist\_ok=True)} & all missing levels, no error if present \\
+delete empty & \code{os.rmdir(d)} & fails if not empty \\
+delete tree & \code{shutil.rmtree(d)} & deletes everything inside: careful \\
+list names & \code{os.listdir(d)} & \code{list} of \code{str}, unsorted \\
+current dir & \code{os.getcwd()}, \code{os.chdir(d)} & changes for the whole program \\
+match names & \code{glob.glob(pattern)} & shell-style patterns, not regex \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{pycode}
+import glob
+
+os.makedirs("data/runs/a1", exist_ok=True)
+print(os.listdir("data"), os.path.isdir("data/runs/a1"))
+try:
+    os.rmdir("data")
+except OSError as e:
+    print("OSError:", type(e).__name__)
+shutil.rmtree("data")
+print(os.path.exists("data"))
+os.mkdir("runs")
+for name in ("a.jsonl", "b.jsonl", "notes.md"):
+    with open("runs/" + name, "w", encoding="utf-8") as f:
+        f.write("x\n")
+os.chdir("runs")
+print(sorted(os.listdir(".")), os.path.basename(os.getcwd()))
+os.chdir("..")
+\end{pycode}
+\begin{rawcode}
+['runs'] True
+OSError: OSError
+False
+['a.jsonl', 'b.jsonl', 'notes.md'] runs
+\end{rawcode}
+
+The glob patterns are \emph{not} regular expressions.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X l@{}}
+\toprule
+\textbf{Pattern} & \textbf{Matches} & \textbf{Regex equivalent} \\
+\midrule
+\code{*} & any number of any characters & \code{.*} \\
+\code{?} & exactly one character & \code{.} \\
+\code{[abc]} & one of \code{a}, \code{b}, \code{c} & same \\
+\code{[!abc]} & one character that is not \code{a}, \code{b}, \code{c} & \code{[\^{}abc]} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{pycode}
+print(sorted(glob.glob("*.txt")))
+print(glob.glob("ru??"), glob.glob("[rz]*"))
+print(sorted(os.path.basename(p) for p in glob.glob("runs/*.jsonl")))
+\end{pycode}
+\begin{rawcode}
+['a.txt', 'b.txt', 'cafe.txt', 'notes.txt', 'oops.txt']
+['runs'] ['runs']
+['a.jsonl', 'b.jsonl']
+\end{rawcode}
+
+\begin{trap}
+\code{os.listdir} gives names only, not paths, and in no fixed order. Wrap it in \code{sorted()}
+if order matters, and join the folder name back on before opening a file. Also \code{os.chdir}
+changes the whole program's idea of ``here''; avoid it in library code and use full paths.
+\end{trap}
+
+% ------------------------------------------------------------
+\section{Pathnames}
+
+A \emph{pathname} says where a file is: \emph{absolute} from the root, or \emph{relative} to the
+current directory. Unix, macOS and URLs separate parts with \code{/}. Windows uses
+\code{\textbackslash}. Python accepts \code{/} on Windows too, so you can often use slashes
+everywhere. If you write backslashes yourself, double them or use a raw string
+(\code{r"eek\textbackslash urk"}); \code{"eek\textbackslash urk"} contains an escape sequence, not a path.
+
+\subsection{os.path}
+
+\begin{pycode}
+p = os.path.join("eek", "urk", "snort.txt")        # uses the OS separator
+print(p.replace(os.sep, "/"))
+print(os.path.splitext("a/b/model.tar.gz"))
+print(os.path.basename("a/b/c.txt"), os.path.dirname("a/b/c.txt"))
+print(os.path.isabs(os.path.abspath("x")))
+\end{pycode}
+\begin{rawcode}
+eek/urk/snort.txt
+('a/b/model.tar', '.gz')
+c.txt a/b
+True
+\end{rawcode}
+
+\code{os.path.abspath(p)} turns a relative path into an absolute one. \code{os.path.realpath(p)}
+also follows symbolic links to the real file. Never build paths with \code{"a" + "/" + "b"}: let
+\code{join} or \code{pathlib} insert the right separator.
+
+\subsection{pathlib}
+
+\code{pathlib.Path} treats a path as an \emph{object}, not a string. The \code{/} operator joins
+parts, and the object has handy attributes and methods.
+
+\begin{center}
+\begin{tikzpicture}[>=Stealth]
+  \foreach \x/\t/\c in {0/{runs}/cblue, 2.0/{/}/cgray, 2.8/{2025}/cblue, 4.8/{/}/cgray, 5.6/{eval.jsonl}/cgreen}
+    \node[font=\ttfamily\Large,text=\c] at (\x,0) {\t};
+  \draw[decorate,decoration={brace,amplitude=4pt},cblue,thick] (-0.5,0.45) -- node[above=3pt,font=\ttfamily\scriptsize,text=ink]{.parent = runs/2025} (4.0,0.45);
+  \draw[decorate,decoration={brace,mirror,amplitude=4pt},cgreen,thick] (4.7,-0.45) -- node[below=3pt,font=\ttfamily\scriptsize,text=ink]{.name = eval.jsonl} (7.1,-0.45);
+  \draw[decorate,decoration={brace,mirror,amplitude=3pt},cgold,thick] (4.7,-1.3) -- node[below=3pt,font=\ttfamily\scriptsize,text=ink]{.stem = eval} (6.2,-1.3);
+  \draw[decorate,decoration={brace,mirror,amplitude=3pt},cpurple,thick] (6.25,-1.3) -- node[below=3pt,font=\ttfamily\scriptsize,text=ink]{.suffix} (7.1,-1.3);
+\end{tikzpicture}
+\end{center}
+% MD-BEGIN
+% ```text
+% Path("runs/2025/eval.jsonl")
+%       |-------- .parent --------|  |------ .name ------|
+%       runs / 2025                  /  eval  .jsonl
+%                                       .stem  .suffix
+% .parts = ('runs', '2025', 'eval.jsonl')
+% ```
+% MD-END
+
+\begin{pycode}
+from pathlib import Path, PurePosixPath, PureWindowsPath
+
+p = Path("eek") / "urk" / "snort.txt"
+print(p.as_posix(), p.name, p.stem, p.suffix)
+print(p.parent.as_posix(), p.parts)
+print(p.with_suffix(".jsonl").as_posix(), p.with_name("x.md").as_posix())
+print(PureWindowsPath(PurePosixPath("eek/urk/snort.txt")))
+print(type(p).__name__ in ("WindowsPath", "PosixPath"))
+\end{pycode}
+\begin{rawcode}
+eek/urk/snort.txt snort.txt snort .txt
+eek/urk ('eek', 'urk', 'snort.txt')
+eek/urk/snort.jsonl eek/urk/x.md
+eek\urk\snort.txt
+True
+\end{rawcode}
+
+\code{print(p)} shows the path in your platform's style, and \code{repr(p)} shows
+\code{WindowsPath(...)} or \code{PosixPath(...)} depending on the system. The \code{Pure...}
+classes only manipulate path text and never touch the disk, so you can build a Windows path on a
+Mac.
+
+\code{Path} objects also do the file work:
+
+\begin{pycode}
+runs = Path("runs")
+body = '{"x": 2}\n{"x": 3}\n'
+(runs / "c.jsonl").write_text(body, encoding="utf-8", newline="\n")
+print(sorted(x.name for x in runs.iterdir()))
+print(sorted(x.name for x in runs.glob("*.jsonl")))
+print(sorted(x.as_posix() for x in Path(".").rglob("*.md")))
+print((runs / "c.jsonl").read_text(encoding="utf-8").splitlines())
+print((runs / "c.jsonl").exists(), (runs / "c.jsonl").is_file(), runs.is_dir())
+print((runs / "c.jsonl").stat().st_size, runs.resolve().is_absolute())
+tmp = Path("final.json.tmp")
+tmp.write_text("{}", encoding="utf-8")
+tmp.replace("final.json")
+print(sorted(x for x in os.listdir(".") if x.startswith("final")))
+\end{pycode}
+\begin{rawcode}
+['a.jsonl', 'b.jsonl', 'c.jsonl', 'notes.md']
+['a.jsonl', 'b.jsonl', 'c.jsonl']
+['runs/notes.md']
+['{"x": 2}', '{"x": 3}']
+True True True
+18 True
+['final.json']
+\end{rawcode}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l l@{}}
+\toprule
+\textbf{Job} & \textbf{os / os.path style} & \textbf{pathlib style} \\
+\midrule
+join & \code{os.path.join(a, b)} & \code{Path(a) / b} \\
+file name & \code{os.path.basename(p)} & \code{p.name} \\
+extension & \code{os.path.splitext(p)[1]} & \code{p.suffix} \\
+exists & \code{os.path.exists(p)} & \code{p.exists()} \\
+read all text & \code{open(p).read()} & \code{p.read\_text(encoding=...)} \\
+list folder & \code{os.listdir(d)} & \code{d.iterdir()} \\
+find by pattern & \code{glob.glob("d/*.py")} & \code{d.glob("*.py")} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{gamerule}
+Prefer \code{pathlib} in new code. Paths become objects with a clear type, the \code{/} join is
+portable, and one-line helpers like \code{read\_text} and \code{write\_text} close the file for
+you. You can pass a \code{Path} anywhere a filename string is accepted, including \code{open()}.
+\end{gamerule}
+
+% ------------------------------------------------------------
+\section{BytesIO and StringIO}
+
+Many functions want a file object, but your data is already in memory. \code{io.StringIO} wraps a
+\code{str} and \code{io.BytesIO} wraps \code{bytes}. They have the same methods as real files
+(\code{read}, \code{write}, \code{seek}, iteration) but no disk is touched.
+
+\begin{center}
+\begin{tikzpicture}[>=Stealth]
+  \node[c20n=cblue,align=center] (fn) at (0,0) {function that wants\\[-1pt]a file object};
+  \node[c20n=cgray] (real) at (6.5,0.9) {open("x.txt")};
+  \node[c20n=cgreen] (sio) at (6.5,0) {StringIO("text")};
+  \node[c20n=cpurple] (bio) at (6.5,-0.9) {BytesIO(b"bytes")};
+  \draw[<-,thick,cgray] (fn.east) -- (real.west);
+  \draw[<-,thick,cgray] (fn.east) -- (sio.west);
+  \draw[<-,thick,cgray] (fn.east) -- (bio.west);
+  \node[font=\sffamily\scriptsize,text=cgray,anchor=west] at (9.2,0.9) {disk};
+  \node[font=\sffamily\scriptsize,text=cgray,anchor=west] at (9.2,0) {memory, text};
+  \node[font=\sffamily\scriptsize,text=cgray,anchor=west] at (9.2,-0.9) {memory, bytes};
+\end{tikzpicture}
+\end{center}
+% MD-BEGIN
+% ```mermaid
+% flowchart LR
+%     R["open('x.txt') (disk)"] --> F["function that wants a file object"]
+%     S["StringIO('text') (memory, text)"] --> F
+%     B["BytesIO(b'bytes') (memory, bytes)"] --> F
+% ```
+% MD-END
+
+\begin{pycode}
+import io, csv
+
+s = io.StringIO()
+s.write("a,b\n")
+print("x", file=s)
+print(repr(s.getvalue()), type(s).__name__)
+s.seek(0)
+print(s.readline(), end="")
+print(list(io.StringIO("p\nq\n")))
+bio = io.BytesIO(b"\x89PNG\r\n")
+print(bio.read(4), bio.tell(), bio.getvalue())
+bio.seek(0)
+bio.write(b"AB")
+print(bio.getvalue())
+print(list(csv.DictReader(io.StringIO("name,score\nx,1\ny,2\n"))))
+\end{pycode}
+\begin{rawcode}
+'a,b\nx\n' StringIO
+a,b
+['p\n', 'q\n']
+b'\x89PNG' 4 b'\x89PNG\r\n'
+b'ABNG\r\n'
+[{'name': 'x', 'score': '1'}, {'name': 'y', 'score': '2'}]
+\end{rawcode}
+
+\begin{typecheck}
+\code{StringIO} holds \code{str} and \code{BytesIO} holds \code{bytes}. Do not mix them: writing a
+\code{str} into a \code{BytesIO} raises \code{TypeError}. \code{getvalue()} returns the whole
+content regardless of the pointer, while \code{read()} starts from the pointer. After you write
+into a \code{StringIO}, call \code{seek(0)} before reading it back.
+\end{typecheck}
+
+Typical uses: unit tests for code that reads a file, capturing what a function prints into a
+string, building a CSV or an image in memory before sending it over the network, and converting an
+image format with the Pillow library (\code{Image.open(BytesIO(data))}, which needs
+\code{pip install pillow}; not run here).
+
+% ------------------------------------------------------------
+\section{File Formats: Determination}
+
+You may meet a file and not know what it is. The file extension is only a hint: anyone can
+rename \code{.png} to \code{.txt}. Better checks look at the first bytes, the \emph{magic number}
+(chapter on binary data: a PNG starts with the bytes \code{\textbackslash x89PNG}).
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+\textbf{Tool} & \textbf{What it does} \\
+\midrule
+\code{file} (Unix command) & identifies files by magic bytes and other rules \\
+\code{python-magic} & Python wrapper around the \code{libmagic} library used by \code{file} \\
+\code{magika} & Google's learned file-type detector; \code{pip install magika} \\
+your own check & compare \code{f.read(8)} with a known header such as \code{b"\textbackslash x89PNG\textbackslash r\textbackslash n\textbackslash x1a\textbackslash n"} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{pycode}
+sig = b"\x89PNG\r\n\x1a\n"
+with open("fake.png", "wb") as f:
+    f.write(sig + b"rest of image")
+with open("fake.png", "rb") as f:
+    print(f.read(8) == sig)
+\end{pycode}
+\begin{rawcode}
+True
+\end{rawcode}
+
+% ------------------------------------------------------------
+\section{Review and what comes next}
+
+You can now open files in the right mode, read them line by line without loading them whole, use
+\code{with} so that they close, move the file pointer with \code{seek}, and manage files and
+folders with \code{os}, \code{shutil} and \code{pathlib}. The next chapter is about concurrency:
+doing several things at once.
+
+\begin{practice}
+\begin{enumerate}[nosep,leftmargin=*]
+  \item Write the string \code{"This is a test of the emergency text system"} to \code{test.txt}
+        with a \code{with} block and UTF-8. Read it back into \code{test2}. Are they equal?
+  \item List all \code{.txt} files in the current folder, sorted, using \code{pathlib} and then
+        using \code{glob}.
+  \item Why does a second \code{for line in f:} over the same open file print nothing? Show two
+        ways to fix it.
+  \item You have a 4 GB JSONL file of eval rows. Write the loop that counts rows with
+        \code{"score" > 0.5} without loading the file into memory.
+  \item Write 100 bytes, then use \code{seek} to read the last 10 bytes in two different ways.
+  \item What goes wrong if you open an existing file with mode \code{"w"} just to look at it?
+        Which mode would you use to append a line to a log?
+\end{enumerate}
+\end{practice}
+
+\begin{achievement}{File Handler}
+\begin{itemize}[nosep,leftmargin=*]
+  \item Choose the correct open mode and always close files with \code{with}.
+  \item Stream large text files line by line and read or write JSONL.
+  \item Move around a binary file with \code{seek} and \code{tell}.
+  \item Build, split and search paths with \code{pathlib} and \code{glob}.
+  \item Use \code{StringIO} and \code{BytesIO} to treat memory like a file.
+\end{itemize}
+\end{achievement}

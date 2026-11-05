@@ -1,0 +1,735 @@
+% ============================================================
+%  Introducing Python, chapter 26: AI
+% ============================================================
+\chapter{AI}
+
+\tikzset{
+  w26n/.style={draw=#1,fill=#1!10,rounded corners=2pt,inner sep=4pt,
+    minimum height=7mm,font=\sffamily\small,align=center},
+  w26n/.default=cblue
+}
+
+\textbf{What this chapter gives you.} This chapter is the map of the field you are entering: where
+modern AI came from, which ideas matter (training, loss, attention, retrieval, agents), and how
+Python fits in. The book's model examples date quickly; \textbf{model names change, concepts
+last}. For hands-on work in this series you use the Anthropic SDK with
+\code{claude-haiku-5-5}, \code{claude-sonnet-5-5} and \code{claude-opus-5-5}.
+
+% ------------------------------------------------------------
+\section{Terms that get mixed up}
+
+%MD
+%```text
+%+-- Artificial intelligence (AI) -----------------------------+
+%|   (rule-based expert systems live in this outer ring)       |
+%|  +-- Machine learning (ML) ---------------------------+     |
+%|  |  +-- Deep learning (DL): many-layer neural nets --+ |     |
+%|  |  |      [ LLMs, e.g. the Claude models ]          | |     |
+%|  |  +------------------------------------------------+ |     |
+%|  +-----------------------------------------------------+     |
+%+--------------------------------------------------------------+
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\sffamily\small]
+  \node[draw=cgray,fill=cgray!6,rounded corners=6pt,minimum width=11.5cm,minimum height=5.6cm,anchor=south west] at (0,0) {};
+  \node[font=\sffamily\bfseries,anchor=north west,text=cgray] at (0.2,5.5) {Artificial intelligence (AI)};
+  \node[draw=cblue,fill=cblue!8,rounded corners=6pt,minimum width=9.4cm,minimum height=4.0cm,anchor=south west] at (1.0,0.3) {};
+  \node[font=\sffamily\bfseries,anchor=north west,text=cblue] at (1.2,4.2) {Machine learning (ML)};
+  \node[draw=cpurple,fill=cpurple!8,rounded corners=6pt,minimum width=7.2cm,minimum height=2.3cm,anchor=south west] at (2.1,0.6) {};
+  \node[font=\sffamily\bfseries,anchor=north west,text=cpurple] at (2.3,2.7) {Deep learning (DL): many-layer neural nets};
+  \node[draw=cgreen,fill=cgreen!10,rounded corners=4pt,minimum width=5.0cm,minimum height=0.9cm,anchor=south west] at (3.2,0.9) {LLMs (e.g.\ the Claude models)};
+  \node[font=\scriptsize,text=cgray,anchor=north west] at (0.2,-0.1) {rule-based expert systems live in the outer ring only (AI without ML)};
+\end{tikzpicture}
+\end{center}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+\textbf{Term} & \textbf{Meaning} \\
+\midrule
+AI & the broad, old goal: machines that do things people do \\
+ML & learn patterns from data instead of being given rules \\
+DL & ML with multi-layer neural networks \\
+LLM & a large deep-learning model trained on text to predict the next token \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{keyidea}[: programs versus models]
+Classic code: \emph{you} write the rules, the computer applies them. Machine learning: you supply
+examples (inputs and the right outputs), and the computer finds the rules (called
+\textbf{weights}). You cannot read the weights like source code, which is why you must test a
+model's outputs rather than trust them.
+\end{keyidea}
+
+% ------------------------------------------------------------
+\section{It Turns Out\dots{} (a short history)}
+
+%MD
+%```mermaid
+%flowchart LR
+%    A["1950s-80s: expert systems (hand-written rules)"] --> B["1986: backpropagation, multilayer nets"]
+%    B --> C["2012: AlexNet wins ImageNet (CNNs)"]
+%    C --> D["2017: transformer (attention)"]
+%    D --> E["2022 on: ChatGPT moment, RAG, agents, MCP"]
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\sffamily\scriptsize,>=Stealth]
+  \draw[->,very thick,cgray] (0,0) -- (15.4,0);
+  \foreach \x/\t/\c in {1.0/{1950s--80s\\expert systems\\(hand-written rules)}/cgray,
+                        7.4/{2012\\AlexNet wins\\ImageNet (CNNs)}/cgreen,
+                        13.2/{2022 on\\ChatGPT moment,\\RAG, agents, MCP}/cred} {
+    \fill[\c] (\x,0) circle (3pt);
+    \node[above=5pt,align=center,text=\c] at (\x,0) {\t};
+  }
+  \foreach \x/\t/\c in {4.4/{1986\\backpropagation\\multilayer nets}/cblue,
+                        10.4/{2017\\transformer\\(attention)}/cpurple} {
+    \fill[\c] (\x,0) circle (3pt);
+    \node[below=5pt,align=center,text=\c] at (\x,0) {\t};
+  }
+\end{tikzpicture}
+\end{center}
+
+\subsection{Expert systems}
+
+From roughly the 1950s to the 1980s, AI meant symbolic, top-down programs: experts wrote the
+rules. Chess shows the arc: a custom machine reached master level in 1983, and IBM's Deep Blue beat
+a grandmaster in 1997. Later, AlphaGo (2016) beat a Go champion, and a successor learned the game
+from self-play with no rules taught.
+
+\subsection{Perceptrons}
+
+A \textbf{perceptron} is one artificial neuron: multiply each input by a weight, add a bias, and
+apply a threshold. It worked for simple classification and was proven unable to learn some
+patterns, which stalled the field for years.
+
+%MD
+%```mermaid
+%flowchart LR
+%    X1(("x1")) -->|"weight w1"| S(("sum"))
+%    X2(("x2")) -->|"weight w2"| S
+%    B["bias b"] --> S
+%    S --> F["step: w1*x1 + w2*x2 + b > 0 ?"] --> Y["0 or 1"]
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\sffamily\small,>=Stealth]
+  \node[w26n=cblue,circle,minimum size=8mm] (x1) at (0,0.9)  {$x_1$};
+  \node[w26n=cblue,circle,minimum size=8mm] (x2) at (0,-0.9) {$x_2$};
+  \node[w26n=cgold,circle,minimum size=11mm] (s) at (4.2,0)  {$\sum$};
+  \node[w26n=cgray,minimum width=1.6cm]   (f) at (6.9,0)  {step};
+  \node[w26n=cgreen,minimum width=1.4cm]  (y) at (9.3,0)  {0 or 1};
+  \draw[->,thick] (x1) -- node[above,sloped,font=\scriptsize]{weight $w_1$} (s);
+  \draw[->,thick] (x2) -- node[below,sloped,font=\scriptsize]{weight $w_2$} (s);
+  \node[font=\scriptsize] (b) at (4.2,1.5) {bias $b$}; \draw[->,thick] (b) -- (s);
+  \draw[->,thick] (s) -- (f); \draw[->,thick] (f) -- (y);
+  \node[font=\scriptsize,text=cgray] at (5.5,-1.0) {$w_1x_1+w_2x_2+b>0\;?$};
+\end{tikzpicture}
+\end{center}
+
+A tiny trainer in pure Python (my own example; it ran). It learns AND, which one neuron can
+represent, but not XOR, which it cannot:
+
+\begin{pycode}
+def step(x):
+    return 1 if x > 0 else 0
+
+def train(samples, epochs=20, lr=0.1):
+    w1 = w2 = b = 0.0
+    for _ in range(epochs):
+        for (x1, x2), target in samples:
+            pred = step(w1 * x1 + w2 * x2 + b)
+            err = target - pred
+            w1 += lr * err * x1      # nudge weights toward the target
+            w2 += lr * err * x2
+            b += lr * err
+    return w1, w2, b
+
+def accuracy(samples, w1, w2, b):
+    hits = sum(step(w1 * x1 + w2 * x2 + b) == t for (x1, x2), t in samples)
+    return hits / len(samples)
+
+AND = [((0, 0), 0), ((0, 1), 0), ((1, 0), 0), ((1, 1), 1)]
+XOR = [((0, 0), 0), ((0, 1), 1), ((1, 0), 1), ((1, 1), 0)]
+print("AND", accuracy(AND, *train(AND)))
+print("XOR", accuracy(XOR, *train(XOR)))
+\end{pycode}
+\begin{rawcode}
+AND 1.0
+XOR 0.5
+\end{rawcode}
+
+\subsection{The breakthrough: hidden layers and backpropagation}
+
+In 1986, Rumelhart, Hinton and Williams showed that a \textbf{multilayer perceptron} can learn the
+hard cases, thanks to two additions: \textbf{hidden layers} (more weights between input and output)
+and \textbf{backpropagation} (adjusting the weights backward from the error). Hinton and Hopfield
+shared the 2024 Nobel Prize in Physics for related work.
+
+%MD
+%```mermaid
+%flowchart LR
+%    subgraph In["input layer"]
+%        I1(("in 1")); I2(("in 2")); I3(("in 3"))
+%    end
+%    subgraph Hid["hidden layer"]
+%        H1(("h1")); H2(("h2")); H3(("h3")); H4(("h4"))
+%    end
+%    subgraph Out["output layer"]
+%        O1(("out 1")); O2(("out 2"))
+%    end
+%    In -->|"forward: predict"| Hid --> Out
+%    Out -.->|"error flows backward: adjust every weight"| In
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\sffamily\scriptsize,>=Stealth]
+  \foreach \i in {1,2,3} \node[draw=cblue,fill=cblue!10,circle,minimum size=6mm] (i\i) at (0,2.4-\i*0.9) {};
+  \foreach \i in {1,2,3,4} \node[draw=cpurple,fill=cpurple!10,circle,minimum size=6mm] (h\i) at (3,3.0-\i*0.9) {};
+  \foreach \i in {1,2} \node[draw=cgreen,fill=cgreen!10,circle,minimum size=6mm] (o\i) at (6,1.8-\i*0.9) {};
+  \foreach \i in {1,2,3} \foreach \j in {1,2,3,4} \draw[gray!55] (i\i) -- (h\j);
+  \foreach \i in {1,2,3,4} \foreach \j in {1,2} \draw[gray!55] (h\i) -- (o\j);
+  \node[text=cblue] at (0,-1.6) {input layer};
+  \node[text=cpurple] at (3,-1.6) {hidden layer};
+  \node[text=cgreen] at (6,-1.6) {output layer};
+  \draw[->,very thick,cred] (6.9,-1.0) -- node[below,text=cred]{error flows backward: adjust every weight} (0.0,-1.0);
+  \draw[->,very thick,cgreen] (0,2.75) -- node[above,text=cgreen]{forward: predict} (6,2.75);
+\end{tikzpicture}
+\end{center}
+
+\textbf{Training} means: start with random weights; predict; measure how wrong you are with a
+\textbf{loss function}; use calculus (the slope, or \emph{gradient}) to learn which way to move each
+weight; repeat. \textbf{Gradient descent} takes bigger steps where the slope is steep. After
+training, using the model on new data is \textbf{inference}.
+
+%MD
+%```mermaid
+%flowchart LR
+%    D["training data"] --> P["predict (forward pass)"] --> L["loss: how wrong?"] --> G["gradient (backprop)"] --> U["update weights"]
+%    U -.->|"repeat until the loss stops falling"| P
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\sffamily\small,>=Stealth]
+  \node[w26n=cgray]   (d) at (0,0)    {training\\data};
+  \node[w26n=cblue]   (p) at (3.0,0)  {predict\\{\scriptsize forward pass}};
+  \node[w26n=cred]    (l) at (6.0,0)  {loss\\{\scriptsize how wrong?}};
+  \node[w26n=cpurple] (g) at (9.0,0)  {gradient\\{\scriptsize backprop}};
+  \node[w26n=cgreen]  (u) at (12.0,0) {update\\{\scriptsize weights}};
+  \foreach \a/\b in {d/p,p/l,l/g,g/u} \draw[->,thick] (\a) -- (\b);
+  \draw[->,thick,dashed,cgray] (u.south) -- ++(0,-0.8) -| node[pos=0.25,below,font=\scriptsize]{repeat until the loss stops falling} (p.south);
+\end{tikzpicture}
+\end{center}
+
+\begin{boss}[: learning is minimizing a loss]
+No one writes the model's rules. A loop nudges the weights downhill on the loss curve. The smallest
+possible example: fit $y = w\,x$ to data that follows $y=3x$. The loss is the mean squared error.
+Each step moves $w$ by $-\text{learning rate}\times\text{gradient}$.
+
+\begin{pycode}
+xs = [1.0, 2.0, 3.0, 4.0]
+ys = [3.0, 6.0, 9.0, 12.0]
+w, lr = 0.0, 0.01
+
+def loss(w):
+    return sum((w * x - y) ** 2 for x, y in zip(xs, ys)) / len(xs)
+
+for step in range(6):
+    grad = sum(2 * (w * x - y) * x for x, y in zip(xs, ys)) / len(xs)
+    print(f"step {step}: w={w:.4f} loss={loss(w):.4f} grad={grad:.4f}")
+    w -= lr * grad
+\end{pycode}
+\begin{rawcode}
+step 0: w=0.0000 loss=67.5000 grad=-45.0000
+step 1: w=0.4500 loss=48.7687 grad=-38.2500
+step 2: w=0.8325 loss=35.2354 grad=-32.5125
+step 3: w=1.1576 loss=25.4576 grad=-27.6356
+step 4: w=1.4340 loss=18.3931 grad=-23.4903
+step 5: w=1.6689 loss=13.2890 grad=-19.9667
+\end{rawcode}
+
+%MD
+%```text
+%Loss curve: loss = 7.5 * (w - 3)^2   (dots = the six steps in the output above)
+%loss
+% 67.5 *
+% 48.8    *
+% 35.2       *
+% 25.5          *
+% 18.4            *
+% 13.3              *
+%  0   -----------------------V-------   minimum at w = 3
+%      0   0.45 0.83 1.16 1.43 1.67 ...  w
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}
+\begin{axis}[width=9.5cm,height=5.6cm,xlabel={weight $w$},ylabel={loss},xmin=0,xmax=4.5,ymin=0,ymax=75,
+  title={\scriptsize loss $=7.5\,(w-3)^2$; dots are the steps above},title style={font=\sffamily}]
+\addplot[domain=0:4.5,samples=60,thick,cblue]{7.5*(x-3)^2};
+\addplot[only marks,mark=*,mark size=2pt,cred,nodes near coords,
+  every node near coord/.append style={font=\scriptsize,above right,text=cred}]
+  coordinates {(0,67.5) (0.45,48.77) (0.8325,35.24) (1.1576,25.46) (1.434,18.39) (1.6689,13.29)};
+\end{axis}
+\end{tikzpicture}
+\end{center}
+
+The gradient shrinks as $w$ nears the minimum, so the steps shrink too. Running 200 more steps (my
+run) ends at $w=3.0000$. A learning rate that is too big overshoots and the loss grows. Real models
+do the same thing with billions of weights, and PyTorch computes the gradients for you.
+\end{boss}
+
+\subsection{Image recognition: ImageNet and AlexNet}
+
+ImageNet is a huge labeled image set. From 2010 a yearly contest asked programs to label images.
+In 2012 the entry AlexNet won by a wide margin using a \textbf{convolutional neural network}
+(CNN), and interest in deep learning exploded. CNNs scan small patches of an image for patterns.
+
+\subsection{Large language models}
+
+In 2017, the paper ``Attention Is All You Need'' introduced the \textbf{transformer}. Earlier
+sequence models (RNNs) processed text one step at a time. \emph{Attention} lets the model relate
+every token to every other token, and it can be computed in parallel on GPUs, so very large models
+became practical. LLMs look like fancy autocomplete, yet they show surprising abilities at scale.
+
+%MD
+%```mermaid
+%flowchart LR
+%    T["text"] --> K["tokens (numbers)"] --> M["transformer (attention layers)"] --> P["probabilities for the next token"] --> O["pick one, append, repeat"]
+%    O -.-> K
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\sffamily\small,>=Stealth]
+  \node[w26n=cgray]   (t) at (0,0)    {text};
+  \node[w26n=cgold]   (k) at (2.6,0)  {tokens\\{\scriptsize numbers}};
+  \node[w26n=cpurple,minimum width=3.0cm] (m) at (6.2,0) {transformer\\{\scriptsize attention layers}};
+  \node[w26n=cblue]   (pr) at (10.0,0) {probabilities\\{\scriptsize for next token}};
+  \node[w26n=cgreen]  (o) at (13.2,0) {pick one\\{\scriptsize append, repeat}};
+  \foreach \a/\b in {t/k,k/m,m/pr,pr/o} \draw[->,thick] (\a) -- (\b);
+  \draw[->,dashed,cgray] (o.south) -- ++(0,-0.7) -| (k.south);
+\end{tikzpicture}
+\end{center}
+
+\begin{trap}
+The model sees \textbf{tokens}, not letters. A word like \emph{strawberry} may arrive as a couple of
+chunks (the real split depends on the tokenizer). That is why small models famously miscount
+letters. When you need an exact answer, do not ask a model to count: write \code{"strawberry".count("r")}
+(it returns 3).
+\end{trap}
+
+\subsection{The ChatGPT moment}
+
+In 2022 OpenAI released ChatGPT. A chat interface turned a research model into something anyone
+could use: write code, converse, summarize. Since then every major lab has shipped chat models and
+APIs.
+
+\subsection{Retrieval augmented generation (RAG)}
+
+A model answers from what it learned in training, and it may \textbf{hallucinate}: state a wrong
+answer confidently. \textbf{RAG} gives the model fresh, relevant text at question time, and tends to
+reduce (not remove) hallucinations.
+
+%MD
+%```mermaid
+%flowchart LR
+%    subgraph once["indexing: once"]
+%        DOC["documents"] --> CH["chunks"] --> EM["embed (vectors)"] --> VS[("vector store: similarity search")]
+%    end
+%    subgraph per["per question"]
+%        Q["question"] --> QE["embed"] --> VS
+%        Q --> PR["prompt = question + top chunks"]
+%        VS -->|"top-k similar chunks"| PR
+%        PR --> LLM["LLM"] --> ANS["answer"]
+%    end
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\sffamily\small,>=Stealth]
+  % indexing row
+  \node[w26n=cgray]   (doc) at (0,1.7)   {documents};
+  \node[w26n=cgold]   (ch)  at (3.0,1.7) {chunks};
+  \node[w26n=cpurple] (em)  at (6.0,1.7) {embed\\{\scriptsize vectors}};
+  \node[w26n=cteal,minimum width=2.6cm] (vs) at (9.6,0.85) {vector store\\{\scriptsize similarity search}};
+  \foreach \a/\b in {doc/ch,ch/em} \draw[->,thick] (\a) -- (\b);
+  \draw[->,thick] (em) -- (vs);
+  \node[font=\scriptsize,text=cgray,anchor=east] at (-0.8,1.7) {once:};
+  % query row
+  \node[font=\scriptsize,text=cgray,anchor=east] at (-0.8,0) {per question:};
+  \node[w26n=cblue]   (q)  at (0,0)    {question};
+  \node[w26n=cpurple] (qe) at (3.0,0)  {embed};
+  \draw[->,thick] (q) -- (qe); \draw[->,thick] (qe.east) -| ([xshift=-0.5cm]vs.south);
+  \node[w26n=cgold,minimum width=2.8cm] (pr) at (3.4,-2.1) {prompt =\\question + top chunks};
+  \node[w26n=cgreen]  (llm) at (7.4,-2.1) {LLM};
+  \node[w26n=cblue]   (ans) at (10.4,-2.1) {answer};
+  \draw[->,thick] (vs.south) |- (3.4,-1.0) -- (pr.north);
+  \node[font=\scriptsize,text=cgray,anchor=south west] at (6.0,-1.0) {top-k similar chunks};
+  \draw[->,thick] (q.south) |- (pr.west);
+  \draw[->,thick] (pr) -- (llm); \draw[->,thick] (llm) -- (ans);
+\end{tikzpicture}
+\end{center}
+
+\subsection{Agents, tools and protocols}
+
+Plain models take text in and give text out. Many are \textbf{multimodal} too (images, audio,
+video). Applications now connect a model to outside \textbf{tools and data}: a vector store for
+similarity search, a browser to control, a code runner. In an \textbf{agent loop} the model decides
+which tool to call, your code runs it, and the result goes back to the model, until it can answer.
+
+%MD
+%```mermaid
+%flowchart LR
+%    M["LLM"] -->|"call tool X with args"| C["your code: runs the tool"]
+%    C -->|"tool result"| M
+%    C <--> T1["search / DB"]
+%    C <--> T2["code runner"]
+%    C <--> T3["browser"]
+%```
+%Repeat until the model returns a final answer.
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\sffamily\small,>=Stealth]
+  \node[w26n=cgreen,minimum width=2.4cm,minimum height=1.2cm] (m) at (0,0) {LLM};
+  \node[w26n=cgold,minimum width=3.0cm]   (c) at (5.2,0)   {your code\\{\scriptsize runs the tool}};
+  \node[w26n=cblue,minimum width=2.6cm]   (t1) at (10.2,1.0) {search / DB};
+  \node[w26n=cblue,minimum width=2.6cm]   (t2) at (10.2,0)   {code runner};
+  \node[w26n=cblue,minimum width=2.6cm]   (t3) at (10.2,-1.0){browser};
+  \draw[->,thick,cgreen] (m.north east) to[bend left=20] node[above,font=\scriptsize]{``call tool X with args''} (c.north west);
+  \draw[->,thick,cgold] (c.south west) to[bend left=20] node[below,font=\scriptsize]{tool result} (m.south east);
+  \foreach \t in {t1,t2,t3} \draw[<->,thick,cgray] (c) -- (\t);
+  \node[font=\scriptsize,text=cgray] at (5.2,-1.7) {repeat until the model returns a final answer};
+\end{tikzpicture}
+\end{center}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+\textbf{Name} & \textbf{What it is} \\
+\midrule
+LangChain & a Python framework to wire a model to tools and steps \\
+MCP (Model Context Protocol) & Anthropic's open protocol for plugging tools and data sources into models \\
+A2A (Agent2Agent) & Google's protocol for agents to find and talk to each other \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Efficiency}
+
+Better algorithms, cheaper and more scalable hardware and the cloud made all this affordable.
+\textbf{GPUs} beat CPUs at the repeated multiply-and-add at the heart of neural networks, because
+they do many of them in parallel.
+
+% ------------------------------------------------------------
+\section{Create Models: Python Frameworks}
+
+Python won AI partly because it is free, open and good with data, and because NumPy and SciPy let a
+slow-looking language drive fast numeric code. The book names the main training frameworks.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X X@{}}
+\toprule
+\textbf{Library} & \textbf{What it is} & \textbf{Use it for} \\
+\midrule
+scikit-learn & classic ML: classification, clustering, regression & small/tabular problems, baselines \\
+TensorFlow & Google's deep-learning framework (2015), mostly C++ underneath & existing TF codebases \\
+PyTorch & Meta's framework (2016), more ``Pythonic'' & most current deep-learning research and models \\
+fastai & high-level layer on PyTorch & quick training experiments \\
+Keras & simple API on top of TensorFlow and others & beginner-friendly model building \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+The book chooses not to teach model building here, and instead shows how to \emph{use} models. That
+matches a junior AI engineer's day-to-day job: call models, evaluate them, wire them to data.
+
+%MD
+%```mermaid
+%flowchart LR
+%    A["Python: your app, glue code"] --> B["C++ / CUDA: fast math kernels"] --> C["GPU / new chips: parallel hardware"]
+%```
+%The usual AI sandwich: easy on top, fast underneath.
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\sffamily\small,>=Stealth]
+  \node[w26n=cgreen,minimum width=3.3cm]  (a) at (0,0)    {Python\\{\scriptsize your app, glue code}};
+  \node[w26n=cblue,minimum width=3.3cm]   (b) at (4.6,0)  {C++ / CUDA\\{\scriptsize fast math kernels}};
+  \node[w26n=cpurple,minimum width=3.3cm] (c) at (9.2,0)  {GPU / new chips\\{\scriptsize parallel hardware}};
+  \draw[->,thick] (a) -- (b); \draw[->,thick] (b) -- (c);
+  \node[font=\scriptsize,text=cgray] at (4.6,-1.0) {the usual AI ``sandwich'': easy on top, fast underneath};
+\end{tikzpicture}
+\end{center}
+
+% ------------------------------------------------------------
+\section{Current Models}
+
+The book lists (as of early 2025) models from OpenAI, Anthropic, Google, Perplexity, DeepSeek,
+xAI and Meta, plus special-purpose models such as AlphaFold (protein structure). That list is
+already dated; treat it as an example of the \emph{kinds} of providers, not a recommendation.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X X@{}}
+\toprule
+\textbf{Kind of model} & \textbf{How you reach it} & \textbf{Trade-off} \\
+\midrule
+Hosted frontier model (Claude, GPT, Gemini) & HTTPS API with a key, via an SDK & best quality; costs per token; your data leaves your machine \\
+Open-weights model (Llama and others) & download and run it yourself (Ollama, Hugging Face) & free to run, private; needs RAM/GPU; usually weaker \\
+Special-purpose model & its own API or library & excellent at one job, useless at others \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{gamerule}
+Do not hard-code a model name deep in your program. Put it in one constant or config value, so you
+can swap \code{claude-haiku-5-5} for \code{claude-sonnet-5-5} or \code{claude-opus-5-5} (cheaper and
+faster versus stronger) without touching the logic.
+\end{gamerule}
+
+Illustrative call with the Anthropic SDK. It needs \code{pip install anthropic} and an API key
+in your environment (variable \code{ANTHROPIC\_API\_KEY}). Syntax-checked only:
+
+\begin{pycode}
+import anthropic
+
+MODEL = "claude-haiku-5-5"          # one place to change the model
+
+client = anthropic.Anthropic()      # reads the key from the environment
+response = client.messages.create(
+    model=MODEL,
+    max_tokens=1000,
+    messages=[{"role": "user", "content": "Define a limerick in one line."}],
+)
+for block in response.content:      # content is a LIST of blocks
+    if block.type == "text":
+        print(block.text)
+\end{pycode}
+
+\begin{typecheck}
+The SDK returns a \textbf{typed object}, not a dict. I built one offline (no API call) to show
+the types:
+
+\begin{pycode}
+from anthropic.types import Message, TextBlock, Usage
+
+msg = Message(
+    id="msg_demo", type="message", role="assistant",
+    model="claude-haiku-5-5",
+    content=[TextBlock(type="text", text="A token is a chunk of text.")],
+    stop_reason="end_turn", stop_sequence=None,
+    usage=Usage(input_tokens=12, output_tokens=9),
+)
+print(type(msg).__name__)
+print(type(msg.content).__name__, type(msg.content[0]).__name__)
+print(msg.usage.input_tokens + msg.usage.output_tokens)
+d = msg.model_dump()                    # plain dict, e.g. for json.dumps
+print(type(d).__name__, d["content"][0]["text"])
+\end{pycode}
+\begin{rawcode}
+Message
+list TextBlock
+21
+dict A token is a chunk of text.
+\end{rawcode}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+\textbf{Expression} & \textbf{Type} & \textbf{Use} \\
+\midrule
+\code{response} & \code{Message} (object) & attribute access: \code{.content}, \code{.usage} \\
+\code{response.content} & \code{list} of blocks & loop; do not assume \code{[0]} is text \\
+\code{block.text} & \code{str} & only on blocks whose \code{type == "text"} \\
+\code{response.model\_dump()} & \code{dict} & save to JSON, log, compare \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{typecheck}
+
+% ------------------------------------------------------------
+\section{A Million Models: Hugging Face}
+
+Hugging Face is a hub with over a million open models and many datasets (the book's count). Its
+\code{transformers} library downloads and runs them, on top of PyTorch or TensorFlow
+(\code{pip install transformers torch}). The \code{pipeline} helper is the quickest start.
+Illustrative sketch (not run; the model id is a placeholder you pick from the hub):
+
+\begin{pycode}
+from transformers import pipeline
+
+classify = pipeline("text-classification", model="<model-id-from-the-hub>")
+result = classify("The new release fixed my bug.")
+# result is a LIST of dicts, e.g. [{"label": "...", "score": 0.97}]
+print(result[0]["label"], result[0]["score"])
+\end{pycode}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+\textbf{Hub item} & \textbf{Why you care} \\
+\midrule
+Models & ready-made weights for text, vision, audio and more; check each model's license \\
+Datasets & data for training and evaluation \\
+Libraries & \code{transformers} to run models, others to train them \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+% ------------------------------------------------------------
+\section{Working Examples With Ollama}
+
+Ollama runs open models on your own computer, free and open source, with a command-line tool and a
+Python library (\code{pip install ollama}). The book uses it to try small local models. Typical flow:
+
+\begin{rawcode}
+$ ollama serve                   # start the local server
+$ ollama run tinyllama           # downloads the model on first use, then chats
+>>> Send a message (/? for help)
+\end{rawcode}
+
+Illustrative Python use (not run; check the library docs for current response fields):
+
+\begin{pycode}
+import ollama
+
+reply = ollama.chat(
+    model="tinyllama",
+    messages=[{"role": "user", "content": "What is a limerick?"}],
+)
+print(reply["message"]["content"])
+\end{pycode}
+
+%MD
+%```mermaid
+%flowchart LR
+%    PY["your Python"] <--> LIB["ollama library"] <--> SRV["local server (ollama serve)"] <--> MOD["model weights in RAM / GPU"]
+%```
+%Everything stays on your machine: no API key, no per-token bill.
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\sffamily\small,>=Stealth]
+  \node[w26n=cgreen]  (py) at (0,0)    {your Python};
+  \node[w26n=cgold]   (lib) at (3.2,0) {\code{ollama} library};
+  \node[w26n=cblue]   (srv) at (6.8,0) {local server\\{\scriptsize \code{ollama serve}}};
+  \node[w26n=cpurple] (mod) at (10.6,0){model weights\\{\scriptsize in RAM / GPU}};
+  \foreach \a/\b in {py/lib,lib/srv,srv/mod} \draw[<->,thick] (\a) -- (\b);
+  \node[font=\scriptsize,text=cgray] at (5.3,-1.0) {everything stays on your machine: no API key, no per-token bill};
+\end{tikzpicture}
+\end{center}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X X@{}}
+\toprule
+ & \textbf{Local small model} & \textbf{Hosted frontier model} \\
+\midrule
+Cost & free after download; uses your RAM/CPU/GPU & pay per token \\
+Privacy & data stays on your machine & data is sent to the provider \\
+Quality & often weak at counting, poetry, code & much stronger overall \\
+Setup & install, download gigabytes & API key and an SDK \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{What the book's experiments teach}
+
+The author tried two small local models. TinyLlama gave a wrong answer to a letter-counting
+question, did not write a real villanelle or limerick, did not define a limerick correctly, and wrote
+Python that did not work. Code Llama (Python version) did better on short functions but wrote test
+cases that were duplicated and sometimes wrong. The lessons matter more than the models:
+
+\begin{itemize}[leftmargin=*]
+\item \textbf{Small models are uneven.} Match the model to the task; test before you trust.
+\item \textbf{Model output is untrusted input.} Run generated code and check it yourself.
+\item \textbf{Models can be out of date.} One generated snippet used \code{datetime.utcnow()}, which
+Python now warns is deprecated.
+\end{itemize}
+
+Checks I ran for these ideas:
+
+\begin{pycode}
+import warnings
+from datetime import datetime, timezone
+
+def utc_now_str():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+s = utc_now_str()
+print(len(s), s[4], s[10] == " ")
+with warnings.catch_warnings(record=True) as w:
+    warnings.simplefilter("always")
+    datetime.utcnow()                       # the old, deprecated way
+    print(w[0].category.__name__)
+print("strawberry".count("r"))
+gen = (x for x in range(1, 6))              # generator expression
+lst = [x for x in range(1, 6)]              # list comprehension
+print(type(gen).__name__, type(lst).__name__, list(gen))
+\end{pycode}
+\begin{rawcode}
+19 - True
+DeprecationWarning
+3
+generator list [1, 2, 3, 4, 5]
+\end{rawcode}
+
+Note the last line: ``a generator comprehension'' (round brackets) is not the same type as a list
+comprehension (square brackets). A model that returns a list when you asked for a generator has
+changed the type.
+
+\begin{gamerule}
+Never accept model-written tests as proof. Write your own cases (include edge cases such as an empty
+string) and run them against the generated function:
+\end{gamerule}
+
+\begin{pycode}
+def count_letter(word, letter):          # pretend a model wrote this
+    return word.count(letter)
+
+cases = [("strawberry", "r", 3), ("banana", "a", 3), ("", "x", 0)]
+failures = [(w, l, want, count_letter(w, l))
+            for w, l, want in cases if count_letter(w, l) != want]
+print("failures:", failures)
+\end{pycode}
+\begin{rawcode}
+failures: []
+\end{rawcode}
+
+\subsection{References and next steps}
+
+The book points to material on Ollama and its Python library, a general AI tutorial, Chip Huyen's
+\emph{AI Engineering} and \emph{Designing Machine Learning Systems}, and 3Blue1Brown's visual
+videos on backpropagation and gradient descent. For a visual learner, the last is the one to
+watch first.
+
+% ------------------------------------------------------------
+\section{Practice and wrap-up}
+
+Python became the main language of data science and AI because it glues easy code to fast
+libraries. The field moved from hand-written rules to learned weights, and from single models to
+tools and agents.
+
+\begin{practice}
+\begin{enumerate}[leftmargin=*]
+\item Put these in order of nesting: deep learning, AI, machine learning, LLM. Which one does a
+rule-based chess program belong to?
+\item In your own words: what are the \emph{loss}, the \emph{gradient} and a \emph{learning rate}?
+What goes wrong with a learning rate that is too large?
+\item Why does a language model often fail at ``how many r's are in strawberry'', and what is the
+reliable way to get the answer?
+\item Draw the steps of a RAG system for a question about your own notes. Which step uses
+embeddings and which uses the LLM?
+\item Ask any model of your choice to write \code{utc\_now\_str()}. Run it, check for deprecation
+warnings, and write three tests of your own.
+\item List two reasons to run a small model locally and two reasons to call a hosted one.
+\end{enumerate}
+\end{practice}
+
+\begin{achievement}{AI map}
+You can now:
+\begin{itemize}[leftmargin=*]
+\item explain AI, ML, DL and LLM, and the key ideas of training: weights, loss, gradient descent;
+\item describe how transformers, RAG and agents with tools fit together;
+\item read the types in an SDK response (object, list of blocks, dict) and parse them safely;
+\item choose between a local and a hosted model, and verify model-written code instead of trusting it;
+\item write a loop that fits a one-parameter model by gradient descent.
+\end{itemize}
+\end{achievement}

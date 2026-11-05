@@ -1,0 +1,83 @@
+% Shared preamble for the Python notes (style copied from notes/latex/main.tex)
+\usepackage[a4paper,margin=20mm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\renewcommand{\familydefault}{\sfdefault}
+\usepackage[varqu,scaled=0.92]{zi4}
+\usepackage{amsmath,amssymb}
+\usepackage{xcolor}
+\usepackage{pifont}
+\usepackage{booktabs,array,tabularx}
+\usepackage{enumitem}
+\usepackage{parskip}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,calc,decorations.pathreplacing,fit}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepackage{listings}
+\usepackage[most]{tcolorbox}
+\tcbuselibrary{listings}
+\usepackage{titlesec}
+
+% ---------- palette ----------
+\definecolor{ink}{HTML}{1F2328}
+\definecolor{cblue}{HTML}{2B7BB9}
+\definecolor{cgold}{HTML}{D98E04}
+\definecolor{cgreen}{HTML}{2E8B57}
+\definecolor{cred}{HTML}{D64545}
+\definecolor{cteal}{HTML}{138A7E}
+\definecolor{cpurple}{HTML}{7B5CC4}
+\definecolor{cpink}{HTML}{C2409E}
+\definecolor{cgray}{HTML}{6B7280}
+\definecolor{codebg}{HTML}{F6F8FA}
+
+\usepackage[colorlinks=true,linkcolor=cblue,urlcolor=cblue]{hyperref}
+
+\color{ink}
+
+% ---------- small helpers ----------
+\newcommand{\twodigit}[1]{\ifnum#1<10 0\fi#1}
+\newcommand{\badge}[2]{\tikz[baseline=(b.base)]\node[fill=#1,text=white,rounded corners=2pt,inner sep=2.2pt,font=\scriptsize\sffamily\bfseries](b){#2};}
+\newcommand{\cbadge}[2]{\tikz[baseline=(b.base)]\node[draw=#1,fill=#1!10,text=ink,rounded corners=2pt,inner sep=2.2pt,font=\small\ttfamily](b){#2};}
+\newcommand{\xp}[1]{\par\noindent\hfill\badge{cgold}{+#1 XP}\par}
+\newcommand{\cmark}{\textcolor{cgreen}{\ding{51}}}
+\newcommand{\xmark}{\textcolor{cred}{\ding{55}}}
+\newcommand{\warnicon}{\tikz[baseline=-0.6ex]{\fill[cgold] (0,-0.09)--(0.3,-0.09)--(0.15,0.2)--cycle;\node[text=white,font=\tiny\bfseries,inner sep=0] at (0.15,0.025){!};}}
+\newcommand{\code}[1]{\texttt{#1}}
+
+% ---------- callout boxes ----------
+\tcbset{callout/.style={enhanced,breakable,colback=#1!5,colframe=#1,boxrule=0pt,leftrule=3pt,
+  arc=0pt,outer arc=0pt,left=3mm,right=3mm,top=1mm,bottom=1.5mm,
+  fonttitle=\sffamily\bfseries\footnotesize,coltitle=#1,colbacktitle=#1!5,titlerule=0pt,
+  toptitle=1.5mm,bottomtitle=-0.5mm,before skip=3mm,after skip=3mm}}
+\newtcolorbox{keyidea}[1][]{callout=cblue,title={\ding{72}\ \ KEY IDEA#1}}
+\newtcolorbox{trap}[1][]{callout=cgold,title={\warnicon\ \ TRAP CARD#1}}
+\newtcolorbox{boss}[1][]{callout=cred,title={\ding{110}\ \ BOSS FIGHT#1}}
+\newtcolorbox{lab}[1][]{callout=cgreen,title={\ding{115}\ \ LAB RESULT\quad\textmd{measured, not guessed}#1}}
+\newtcolorbox{gamerule}[1][]{callout=cteal,title={\ding{228}\ \ RULE#1}}
+\newtcolorbox{achievement}[1]{callout=cpurple,title={\ding{72}\ \ ACHIEVEMENT UNLOCKED: #1}}
+
+% ---------- code ----------
+\lstdefinestyle{py}{language=Python,basicstyle=\ttfamily\small,keywordstyle=\color{cpurple}\bfseries,
+  stringstyle=\color{cgreen!80!black},commentstyle=\color{cgray}\itshape,showstringspaces=false,
+  columns=fullflexible,keepspaces=true,upquote=true,breaklines=true}
+\newtcblisting{pycode}{listing only,listing options={style=py},enhanced,colback=codebg,
+  colframe=cgray!35,boxrule=0.4pt,arc=2pt,left=2mm,right=2mm,top=0.5mm,bottom=0.5mm,
+  before skip=2mm,after skip=3mm}
+\newtcblisting{rawcode}{listing only,listing options={basicstyle=\ttfamily\footnotesize,
+  columns=fullflexible,keepspaces=true,breaklines=true,upquote=true},enhanced,colback=codebg,
+  colframe=cgray!35,boxrule=0.4pt,arc=2pt,left=2mm,right=2mm,top=0.5mm,bottom=0.5mm,
+  before skip=2mm,after skip=3mm}
+
+% ---------- headings ----------
+\titleformat{\chapter}[display]{\sffamily\bfseries\color{ink}}
+  {\badge{cgold}{\large CHAPTER \twodigit{\thechapter}}}{6pt}{\Huge}
+\titleformat{name=\chapter,numberless}[display]{\sffamily\bfseries\color{ink}}{}{0pt}{\Huge}
+\titlespacing*{\chapter}{0pt}{0pt}{14pt}
+\titleformat{\section}{\sffamily\Large\bfseries\color{ink}}{\textcolor{cgold}{\thesection}}{0.6em}{}
+\titleformat{\subsection}{\sffamily\large\bfseries\color{cgray}}{}{0em}{}
+\setcounter{secnumdepth}{1}
+
+% ---------- extra boxes for the Python book ----------
+\newtcolorbox{typecheck}[1][]{callout=cpink,title={\ding{110}\ \ TYPE CHECK#1}}
+\newtcolorbox{practice}[1][]{callout=cpurple,title={\ding{228}\ \ PRACTICE#1}}

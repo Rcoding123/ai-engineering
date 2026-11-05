@@ -1,0 +1,698 @@
+% ============================================================
+%  Book chapter 19: Dates and Times
+% ============================================================
+\chapter{Dates and Times}
+
+\textbf{What this chapter gives you:} the four types you need from \code{datetime}
+(\code{date}, \code{time}, \code{datetime}, \code{timedelta}), the difference between a
+\code{str}, a \code{datetime} and a float of seconds, and a few rules that stop time zone bugs.
+In AI work you meet this in log timestamps, API \code{created} fields, run durations and dated
+dataset files.
+
+\tikzset{c19n/.style={draw=#1,fill=#1!10,rounded corners=3pt,minimum height=8mm,inner sep=4pt,
+    font=\ttfamily\small},
+  c19t/.style={draw=#1,fill=#1!10,minimum height=7mm,inner sep=3pt,font=\ttfamily\small}}
+
+% ------------------------------------------------------------
+\section{Why dates and times are hard}
+
+The same day can be written many ways, and some are ambiguous.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+\textbf{Text} & \textbf{Problem} \\
+\midrule
+\code{21 Jul 1987} & month name depends on the language \\
+\code{7/21/1987} & only the US order; 21 cannot be a month \\
+\code{03/04/2025} & 4 March or 3 April? Depends on the country \\
+\code{2025-03-04} & ISO 8601: year, month, day. Unambiguous, and it sorts as text \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Times have a worse problem: time zones follow politics, not geometry, and daylight saving time
+(DST) moves the clock on different days in different countries. One moment in time has many
+local clock readings.
+
+\begin{center}
+\begin{tikzpicture}[>=Stealth]
+  \node[c19n=cblue,align=center] (u) at (0,0) {one instant\\[-1pt]{\scriptsize\sffamily 2025-03-14 09:00 UTC}};
+  \node[c19n=cgreen] (a) at (6.5,1.1) {14:30 \ \ India (+05:30)};
+  \node[c19n=cgold]  (b) at (6.5,0) {09:00 \ \ UTC (+00:00)};
+  \node[c19n=cpurple] (c) at (6.5,-1.1) {05:00 \ \ New York (-04:00)};
+  \draw[->,thick,cgray] (u.east) -- (a.west);
+  \draw[->,thick,cgray] (u.east) -- (b.west);
+  \draw[->,thick,cgray] (u.east) -- (c.west);
+\end{tikzpicture}
+\end{center}
+% MD-BEGIN
+% ```mermaid
+% flowchart LR
+%     U["one instant<br/>2025-03-14 09:00 UTC"] --> A["14:30 India (+05:30)"]
+%     U --> B["09:00 UTC (+00:00)"]
+%     U --> C["05:00 New York (-04:00)"]
+% ```
+% MD-END
+
+DST makes it worse. In spring one local hour does not exist. In autumn one local hour happens
+twice. Here is New York in 2025:
+
+\begin{center}
+\begin{tikzpicture}[>=Stealth]
+  \node[font=\sffamily\scriptsize,anchor=east] at (-0.2,1.0) {9 March (spring)};
+  \node[c19t=cblue] at (0.5,1.0) {01:30};
+  \node[c19t=cred,dashed,fill=cred!5,minimum width=26mm,text=cred] at (3.0,1.0) {02:xx missing};
+  \node[c19t=cblue] at (5.5,1.0) {03:00};
+  \draw[->,thick,cgray] (1.2,1.0) -- (1.7,1.0);
+  \draw[->,thick,cgray] (4.4,1.0) -- (4.9,1.0);
+  \node[font=\sffamily\scriptsize,anchor=east] at (-0.2,-0.2) {2 November (autumn)};
+  \node[c19t=cblue] at (0.5,-0.2) {01:30};
+  \node[c19t=cgold,minimum width=20mm] at (2.6,-0.2) {01:30 again};
+  \node[c19t=cblue] at (5.1,-0.2) {02:00};
+  \draw[->,thick,cgray] (1.2,-0.2) -- (1.5,-0.2);
+  \draw[->,thick,cgray] (3.7,-0.2) -- (4.5,-0.2);
+  \node[font=\sffamily\tiny,text=cgray] at (0.5,-0.7) {EDT};
+  \node[font=\sffamily\tiny,text=cgray] at (2.6,-0.7) {EST (clock set back)};
+\end{tikzpicture}
+\end{center}
+% MD-BEGIN
+% ```text
+% 9 March 2025 (spring forward):   01:30 -> [02:xx does not exist] -> 03:00
+% 2 Nov 2025 (fall back):          01:30 (EDT) -> 01:30 (EST, again!) -> 02:00
+% ```
+% MD-END
+
+\begin{gamerule}[: store UTC, show local]
+Keep every stored or computed timestamp in UTC (or as an epoch number). Convert to a local zone
+only at the edge, when a human reads it. Servers should run on UTC. Local wall-clock times with
+DST create hours that do not exist and hours that happen twice.
+\end{gamerule}
+
+Python spreads dates over several modules: \code{datetime} (the main one), \code{time} (epoch
+seconds and clocks) and \code{calendar} (calendar facts). They overlap, which is confusing at first.
+
+% ------------------------------------------------------------
+\section{Leap Year}
+
+A year has about 365.2422 days, so calendars add a day now and then. The rule has three
+layers, checked from the most special case outward.
+
+\begin{center}
+\begin{tikzpicture}[c19q/.style={draw=cblue,fill=cblue!8,rounded corners=3pt,minimum height=8mm,
+    minimum width=30mm,font=\ttfamily\footnotesize},
+  c19r/.style={draw=#1,fill=#1!12,rounded corners=3pt,minimum height=7mm,minimum width=18mm,font=\sffamily\small\bfseries},
+  >=Stealth]
+  \node[c19q] (q1) at (0,0) {year \% 400 == 0};
+  \node[c19q] (q2) at (4.6,0) {year \% 100 == 0};
+  \node[c19q] (q3) at (9.2,0) {year \% 4 == 0};
+  \node[c19r=cgreen] (r1) at (0,-1.7) {leap};
+  \node[c19r=cred] (r2) at (4.6,-1.7) {not leap};
+  \node[c19r=cgreen] (r3) at (9.2,-1.7) {leap};
+  \node[c19r=cred] (r4) at (13.0,0) {not leap};
+  \draw[->,thick] (q1) -- node[left,font=\sffamily\scriptsize]{yes} (r1);
+  \draw[->,thick] (q1) -- node[above,font=\sffamily\scriptsize]{no} (q2);
+  \draw[->,thick] (q2) -- node[left,font=\sffamily\scriptsize]{yes} (r2);
+  \draw[->,thick] (q2) -- node[above,font=\sffamily\scriptsize]{no} (q3);
+  \draw[->,thick] (q3) -- node[left,font=\sffamily\scriptsize]{yes} (r3);
+  \draw[->,thick] (q3) -- node[above,font=\sffamily\scriptsize]{no} (r4);
+\end{tikzpicture}
+\end{center}
+% MD-BEGIN
+% ```mermaid
+% flowchart LR
+%     Q1{"year % 400 == 0"} -- yes --> L1["leap"]
+%     Q1 -- no --> Q2{"year % 100 == 0"}
+%     Q2 -- yes --> N1["not leap"]
+%     Q2 -- no --> Q3{"year % 4 == 0"}
+%     Q3 -- yes --> L2["leap"]
+%     Q3 -- no --> N2["not leap"]
+% ```
+% MD-END
+
+\begin{pycode}
+import calendar
+
+print([(y, calendar.isleap(y)) for y in (1900, 1996, 2000, 2023, 2024)])
+print(calendar.monthrange(2024, 2)[1], calendar.monthrange(2023, 2)[1])
+print(calendar.day_name[0], calendar.month_name[2])
+\end{pycode}
+\begin{rawcode}
+[(1900, False), (1996, True), (2000, True), (2023, False), (2024, True)]
+29 28
+Monday February
+\end{rawcode}
+
+\code{monthrange(year, month)} returns the weekday of the first day and the number of days. Do not
+write your own leap rule. Use \code{calendar.isleap}, or better, let \code{datetime} do the date
+arithmetic so leap days are handled for you.
+
+% ------------------------------------------------------------
+\section{The datetime Module}
+
+\code{datetime} has four main classes.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X l@{}}
+\toprule
+\textbf{Class} & \textbf{Holds} & \textbf{Looks like} \\
+\midrule
+\code{date} & year, month, day & \code{2025-03-14} \\
+\code{time} & hour, minute, second, microsecond & \code{09:30:00} \\
+\code{datetime} & a date and a time together & \code{2025-03-14T09:30:00} \\
+\code{timedelta} & a length of time & \code{1 day, 3:00:00} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{center}
+\begin{tikzpicture}[>=Stealth]
+  \node[c19n=cgreen] (d) at (0,1.0) {date};
+  \node[c19n=cgreen] (t) at (0,-0.6) {time};
+  \node[c19n=cblue] (dt) at (5.2,0.2) {datetime};
+  \node[c19n=cgold] (td) at (10.6,0.2) {timedelta};
+  \draw[->,thick,cgray] (d.east) -- node[above,sloped,font=\ttfamily\scriptsize]{combine} ([yshift=2mm]dt.west);
+  \draw[->,thick,cgray] (t.east) -- node[below,sloped,font=\ttfamily\scriptsize]{combine} ([yshift=-2mm]dt.west);
+  \draw[->,thick,cgray,bend left=25] (dt.north east) to node[above,font=\ttfamily\scriptsize]{dt2 - dt1} (td.north west);
+  \draw[->,thick,cgray,bend left=25] (td.south west) to node[below,font=\ttfamily\scriptsize]{dt + td} (dt.south east);
+\end{tikzpicture}
+\end{center}
+% MD-BEGIN
+% ```mermaid
+% flowchart LR
+%     D["date"] -- combine --> DT["datetime"]
+%     T["time"] -- combine --> DT
+%     DT -- "dt2 - dt1" --> TD["timedelta"]
+%     TD -- "dt + td" --> DT
+%     DT -- ".date() / .time()" --> D
+% ```
+% MD-END
+
+\subsection{date and timedelta}
+
+\begin{pycode}
+from datetime import date, datetime, timedelta, timezone
+from datetime import time as dtime   # avoid a clash with the time module
+
+d = date(2025, 3, 14)
+print(d, repr(d))
+print(d.year, d.month, d.day, d.weekday(), d.strftime("%A"))
+print(d + timedelta(days=30), d - timedelta(weeks=2))
+gap = date(2025, 12, 25) - d
+print(gap, type(gap), gap.days)
+print(date.min, date.max)
+two = timedelta(days=2)
+print(date(2024, 2, 28) + two, date(2025, 2, 28) + two)
+\end{pycode}
+\begin{rawcode}
+2025-03-14 datetime.date(2025, 3, 14)
+2025 3 14 4 Friday
+2025-04-13 2025-02-28
+286 days, 0:00:00 <class 'datetime.timedelta'> 286
+0001-01-01 9999-12-31
+2024-03-01 2025-03-02
+\end{rawcode}
+
+\code{weekday()} counts Monday as 0, so Friday is 4. \code{isoweekday()} counts Monday as 1. The
+leap day in 2024 shows up with no extra code.
+
+\begin{typecheck}
+\code{print(d)} shows \code{2025-03-14}, but \code{d} is a \code{date} object, not a string.
+\code{repr(d)} shows its real nature. Subtracting two dates gives a \code{timedelta}, not an
+\code{int}: use \code{.days} or \code{.total\_seconds()} to get a number.
+\end{typecheck}
+
+A \code{timedelta} stores days, seconds and microseconds. Careful with \code{.seconds}: it is only
+the seconds part after whole days, not the full length.
+
+\begin{pycode}
+a = datetime(2025, 3, 14, 12, 0, 0)
+b = datetime(2025, 3, 14, 12, 0, 7, 250000)
+td = b - a
+print(td, td.total_seconds(), td.seconds, td.microseconds)
+print(timedelta(days=1, hours=3), timedelta(minutes=90).total_seconds())
+print(timedelta(days=1.5), timedelta(hours=3) / timedelta(hours=2))
+print(timedelta(hours=25) // timedelta(hours=2), timedelta(hours=1) * 3)
+print(timedelta(seconds=-5))
+\end{pycode}
+\begin{rawcode}
+0:00:07.250000 7.25 7 250000
+1 day, 3:00:00 5400.0
+1 day, 12:00:00 1.5
+12 3:00:00
+-1 day, 23:59:55
+\end{rawcode}
+
+\begin{trap}
+Negative timedeltas print strangely: five seconds backward is \code{-1 day, 23:59:55}. It is
+correct, just stored as days plus a positive remainder. Use \code{total\_seconds()} when you want
+\code{-5.0}. Also, \code{.seconds} of a 2-day delta is \code{0}, not 172800.
+\end{trap}
+
+\begin{pycode}
+for bad in (lambda: a - d, lambda: d + d):
+    try:
+        bad()
+    except TypeError as e:
+        msg = str(e).replace("unsupported operand type(s) for ", "")
+        print("TypeError:", msg)
+\end{pycode}
+\begin{rawcode}
+TypeError: -: 'datetime.datetime' and 'datetime.date'
+TypeError: +: 'datetime.date' and 'datetime.date'
+\end{rawcode}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+\textbf{Expression} & \textbf{Result type} & \textbf{Note} \\
+\midrule
+\code{date - date} & \code{timedelta} & also \code{datetime - datetime} \\
+\code{date + timedelta} & \code{date} & \code{datetime + timedelta} gives \code{datetime} \\
+\code{timedelta * int} & \code{timedelta} & \\
+\code{timedelta / timedelta} & \code{float} & \code{//} gives an \code{int} \\
+\code{date + date} & \code{TypeError} & adding two points in time makes no sense \\
+\code{datetime - date} & \code{TypeError} & do not mix the two types \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{time and datetime}
+
+\begin{pycode}
+t = dtime(9, 30)
+print(repr(t), t.hour, t.isoformat())
+dt = datetime(2025, 1, 2, 3, 4, 5, 6)   # y, m, d, h, min, s, microsecond
+print(repr(dt))
+print(dt.isoformat())
+print(dt.isoformat(sep=" ", timespec="seconds"))
+full = datetime.combine(d, t)
+print(full, repr(full.date()), full.time())
+print(full.replace(hour=0, minute=0), full.replace(year=2026))
+print(type(datetime.now()), type(date.today()))
+\end{pycode}
+\begin{rawcode}
+datetime.time(9, 30) 9 09:30:00
+datetime.datetime(2025, 1, 2, 3, 4, 5, 6)
+2025-01-02T03:04:05.000006
+2025-01-02 03:04:05
+2025-03-14 09:30:00 datetime.date(2025, 3, 14) 09:30:00
+2025-03-14 00:00:00 2026-03-14 09:30:00
+<class 'datetime.datetime'> <class 'datetime.date'>
+\end{rawcode}
+
+Objects of these classes are \emph{immutable}. \code{replace()} returns a new object. The
+\code{now()} and \code{today()} calls give the current moment, so their results change each time
+you run them; I show only their types above.
+
+\begin{trap}
+\code{datetime.now()} returns local time \emph{without} any time zone attached. Two machines in
+different zones produce different values for the same instant, and Python cannot tell which is
+which. See the section on aware datetimes below.
+\end{trap}
+
+\subsection{Naive versus aware}
+
+A \code{datetime} is \emph{naive} when it has no \code{tzinfo}, and \emph{aware} when it carries
+a UTC offset. Naive values mean ``some wall clock, somewhere''. Aware values mean one exact
+instant.
+
+\begin{pycode}
+naive = datetime(2025, 3, 14, 9, 0)
+aware = datetime(2025, 3, 14, 9, 0, tzinfo=timezone.utc)
+print(naive.tzinfo, aware.tzinfo, aware.isoformat())
+try:
+    naive < aware
+except TypeError as e:
+    print("TypeError:", e)
+ist = timezone(timedelta(hours=5, minutes=30), "IST")
+local = aware.astimezone(ist)
+print(local.isoformat(), local == aware)
+print(datetime.now(timezone.utc).tzinfo)
+\end{pycode}
+\begin{rawcode}
+None UTC 2025-03-14T09:00:00+00:00
+TypeError: can't compare offset-naive and offset-aware datetimes
+2025-03-14T14:30:00+05:30 True
+UTC
+\end{rawcode}
+
+\code{astimezone} changes how the instant is \emph{shown}, not which instant it is, so
+\code{local == aware} is \code{True}. For real zones with DST rules, use the standard
+\code{zoneinfo} module. On Windows it needs the \code{tzdata} package (\code{pip install tzdata}); I
+could not run that here.
+
+\begin{pycode}
+# needs: tzdata on Windows (pip install tzdata); not run in these notes
+from zoneinfo import ZoneInfo
+
+ny = ZoneInfo("America/New_York")
+instant = datetime(2025, 3, 14, 9, 0, tzinfo=timezone.utc)
+print(instant.astimezone(ny))      # the same instant on a New York wall clock
+\end{pycode}
+
+\begin{boss}[: naive versus aware]
+Most date bugs in real systems are naive/aware bugs. A naive \code{datetime} is just numbers; it
+does not say which zone it is in. An aware one is an exact instant. You cannot compare or subtract
+the two kinds (Python raises \code{TypeError}, which is the helpful outcome). The safe pattern:
+create aware UTC values (\code{datetime.now(timezone.utc)}), store them as ISO strings with an
+offset or as epoch numbers, and convert with \code{astimezone} only for display.
+\end{boss}
+
+% ------------------------------------------------------------
+\section{The time Module}
+
+The \code{time} module is \emph{not} the same as the \code{datetime.time} class. It works with
+\emph{epoch seconds}: the number of seconds since midnight UTC on 1 January 1970. This is the
+simplest way to pass a moment between systems, such as JavaScript, databases or API fields
+(\code{"created": 1700000000}).
+
+\begin{center}
+\begin{tikzpicture}[>=Stealth]
+  \draw[->,thick,cgray] (0,0) -- (12.5,0);
+  \foreach \x/\lab/\val in {0.3/1970-01-01 00:00:00 UTC/0, 5.2/2001-09-09 01:46:40 UTC/1{,}000{,}000{,}000, 9.6/2023-11-14 22:13:20 UTC/1{,}700{,}000{,}000} {
+    \draw[thick,cblue] (\x,-0.12) -- (\x,0.12);
+    \node[font=\ttfamily\small,above=3pt] at (\x,0.1) {\val};
+    \node[font=\sffamily\scriptsize,text=cgray,below=4pt,align=center] at (\x,-0.1) {\lab};
+  }
+  \node[font=\sffamily\scriptsize,text=cgray,anchor=west] at (11.2,0.4) {seconds};
+\end{tikzpicture}
+\end{center}
+% MD-BEGIN
+% ```text
+% 0                        1,000,000,000              1,700,000,000        ---> seconds
+% |------------------------|--------------------------|
+% 1970-01-01 00:00:00 UTC   2001-09-09 01:46:40 UTC     2023-11-14 22:13:20 UTC
+% ```
+% MD-END
+
+\begin{pycode}
+import calendar, time
+
+st = time.gmtime(1_700_000_000)          # UTC, as a struct_time
+print(type(st).__name__, tuple(st))
+print(time.asctime(st))
+print(st.tm_year, st[0], st.tm_yday, st.tm_wday)
+print(time.strftime("%Y-%m-%d %H:%M:%S", st))
+print(calendar.timegm(st))               # back to epoch seconds (UTC)
+print(type(time.time()), type(time.perf_counter()))
+\end{pycode}
+\begin{rawcode}
+struct_time (2023, 11, 14, 22, 13, 20, 1, 318, 0)
+Tue Nov 14 22:13:20 2023
+2023 2023 318 1
+2023-11-14 22:13:20
+1700000000
+<class 'float'> <class 'float'>
+\end{rawcode}
+
+\code{time.time()} returns a \code{float} of epoch seconds. \code{localtime(secs)} gives a
+\code{struct\_time} in your zone, \code{gmtime(secs)} in UTC. A \code{struct\_time} is a named tuple
+of nine fields: year, month, day, hour, minute, second, weekday, day of year, DST flag. Weekday
+counts from 0 (Monday), day of year from 1.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+\textbf{Function} & \textbf{Returns} & \textbf{Use it for} \\
+\midrule
+\code{time.time()} & \code{float}, epoch seconds & timestamps to store or send \\
+\code{time.gmtime(s)} / \code{localtime(s)} & \code{struct\_time} & breaking seconds into parts \\
+\code{time.mktime(st)} & \code{float} & \code{struct\_time} in local zone back to seconds \\
+\code{calendar.timegm(st)} & \code{int} & \code{struct\_time} in UTC back to seconds \\
+\code{time.perf\_counter()} & \code{float} & measuring how long code takes \\
+\code{time.monotonic()} & \code{float} & timeouts that must never go backward \\
+\code{time.sleep(s)} & \code{None} & pause for \code{s} seconds \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{gamerule}
+To time code, use \code{time.perf\_counter()}, not \code{time.time()}. The wall clock can jump
+(clock sync, DST), while \code{perf\_counter} only moves forward and has high resolution. The
+absolute value is meaningless; subtract two readings.
+\end{gamerule}
+
+\begin{pycode}
+t0 = time.perf_counter()
+time.sleep(0.05)
+elapsed = time.perf_counter() - t0
+print(0.04 < elapsed < 0.2)
+\end{pycode}
+\begin{rawcode}
+True
+\end{rawcode}
+
+% ------------------------------------------------------------
+\section{Read and Write Dates and Times}
+
+\subsection{ISO 8601: the default choice}
+
+\code{isoformat()} writes it, \code{fromisoformat()} reads it. In Python 3.11 and later it
+accepts a trailing \code{Z} too. Use ISO for logs, JSON, JSONL eval files and file names: it is
+unambiguous and sorts correctly as plain text.
+
+\begin{pycode}
+print(date.fromisoformat("2025-03-14") == d)
+print(sorted(["2025-03-14", "2025-01-09", "2024-12-31"]))
+print(datetime.fromisoformat("2025-02-14T15:05:09+00:00"))
+print(repr(datetime.fromisoformat("2025-02-14T15:05:09Z")))
+\end{pycode}
+\begin{rawcode}
+True
+['2024-12-31', '2025-01-09', '2025-03-14']
+2025-02-14 15:05:09+00:00
+datetime.datetime(2025, 2, 14, 15, 5, 9, tzinfo=datetime.timezone.utc)
+\end{rawcode}
+
+\subsection{strftime: object to string}
+
+\code{strftime} (``string from time'') formats a date or time with percent codes.
+\code{strptime} (``string parsed to time'') goes the other way with the same codes.
+
+\begin{center}
+\begin{tikzpicture}[>=Stealth]
+  \foreach \x/\f/\r in {0/{\%Y}/2025, 1.6/{-}/{-}, 2.4/{\%m}/02, 3.8/{-}/{-}, 4.6/{\%d}/14, 6.0/{ }/{ }, 6.8/{\%H}/15, 8.2/{:}/{:}, 9.0/{\%M}/05} {
+    \node[font=\ttfamily\small] at (\x,0.9) {\f};
+    \node[font=\ttfamily\small] at (\x,-0.2) {\r};
+    \draw[->,cgray] (\x,0.6) -- (\x,0.15);
+  }
+  \node[font=\sffamily\scriptsize,anchor=west,text=cgray] at (10.0,0.9) {format string};
+  \node[font=\sffamily\scriptsize,anchor=west,text=cgray] at (10.0,-0.2) {result};
+\end{tikzpicture}
+\end{center}
+% MD-BEGIN
+% ```text
+% format string:  %Y  -  %m  -  %d  space  %H  :  %M
+%                  |      |      |           |      |
+% result       :  2025 - 02  -  14   space   15  :  05      ->  "2025-02-14 15:05"
+% ```
+% MD-END
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l l X@{}}
+\toprule
+\textbf{Code} & \textbf{Meaning} & \textbf{Example} & \textbf{Note} \\
+\midrule
+\code{\%Y} \ \code{\%y} & year 4 / 2 digits & \code{2025} \ \code{25} & \\
+\code{\%m} & month & \code{02} & zero-padded \\
+\code{\%d} & day of month & \code{14} & zero-padded \\
+\code{\%H} \ \code{\%I} \ \code{\%p} & hour 24 / 12, AM or PM & \code{15} \ \code{03} \ \code{PM} & \\
+\code{\%M} \ \code{\%S} & minute, second & \code{05} \ \code{09} & \\
+\code{\%f} & microseconds & \code{123456} & 6 digits \\
+\code{\%b} \ \code{\%B} & month name short / long & \code{Feb} \ \code{February} & locale dependent \\
+\code{\%a} \ \code{\%A} & weekday short / long & \code{Fri} \ \code{Friday} & locale dependent \\
+\code{\%j} & day of year & \code{045} & \\
+\code{\%z} \ \code{\%Z} & UTC offset, zone name & \code{+0000} \ \code{UTC} & aware values only \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{pycode}
+dt = datetime(2025, 2, 14, 15, 5, 9)
+fmt = "It's %A, %B %d, %Y, %I:%M:%S%p"
+print(dt.strftime(fmt))
+print(dt.strftime("%Y%m%d-%H%M%S"))
+print(date(2025, 2, 14).strftime("%d/%m/%Y %H:%M"))
+print(dtime(10, 35).strftime("%H:%M"), dtime(10, 35).strftime("%Y-%m-%d"))
+\end{pycode}
+\begin{rawcode}
+It's Friday, February 14, 2025, 03:05:09PM
+20250214-150509
+14/02/2025 00:00
+10:35 1900-01-01
+\end{rawcode}
+
+\begin{trap}
+A \code{date} has no time, so \code{\%H:\%M} prints midnight (\code{00:00}). A \code{time} has no
+date, so \code{\%Y-\%m-\%d} prints the meaningless \code{1900-01-01}. Format only the parts the
+object really has.
+\end{trap}
+
+\subsection{strptime: string to object}
+
+\code{datetime.strptime(text, fmt)} returns a \code{datetime}. It is not a regex: the characters
+that are not percent codes (dashes, spaces, slashes) must match exactly. It also checks that the
+date exists.
+
+\begin{pycode}
+p = datetime.strptime("2025-02-14 15:05:09", "%Y-%m-%d %H:%M:%S")
+print(repr(p), p == dt, type(p))
+print(datetime.strptime("14 Feb 2025", "%d %b %Y").date())
+print(datetime.strptime("03/04/2025", "%d/%m/%Y").date())
+print(datetime.strptime("03/04/2025", "%m/%d/%Y").date())
+for text in ("2025 02 14", "2025-02-30"):
+    try:
+        datetime.strptime(text, "%Y-%m-%d")
+    except ValueError as e:
+        print("ValueError:", e)
+\end{pycode}
+\begin{rawcode}
+datetime.datetime(2025, 2, 14, 15, 5, 9) True <class 'datetime.datetime'>
+2025-02-14
+2025-04-03
+2025-03-04
+ValueError: time data '2025 02 14' does not match format '%Y-%m-%d'
+ValueError: day is out of range for month
+\end{rawcode}
+
+\begin{trap}
+The same text \code{03/04/2025} gives 3 April or 4 March depending on the format you choose, and
+Python will not warn you. Never guess the order. Ask the data source, or demand ISO. Also,
+\code{strptime} returns a \emph{naive} datetime unless the text contains an offset parsed with
+\code{\%z}.
+\end{trap}
+
+\subsection{Locale and names}
+
+Month and weekday names come from the operating system's locale. \code{locale.setlocale(locale.LC\_TIME, "fr\_FR")}
+switches them. That works only if the OS has that locale installed (names vary, such as
+\code{fr\_FR.UTF-8} on Linux). It changes process-wide state, so avoid it in servers. For storing
+and exchanging data, use numeric or ISO formats, which do not depend on language.
+
+% ------------------------------------------------------------
+\section{All the Conversions}
+
+You end up converting among a handful of forms all the time. The \code{datetime} object is the hub.
+
+\begin{center}
+\begin{tikzpicture}[>=Stealth]
+  \node[c19n=cblue] (dt) at (5.5,0) {datetime};
+  \node[c19n=cgreen] (iso) at (0,1.7) {str (ISO)};
+  \node[c19n=cgold] (fmt) at (0,-1.7) {str (custom)};
+  \node[c19n=cpurple] (ep) at (11,1.7) {epoch float};
+  \node[c19n=cteal] (dd) at (11,-1.7) {date + time};
+  \draw[<->,thick,cgray] (iso) -- node[above,sloped,font=\ttfamily\scriptsize]{isoformat / fromisoformat} (dt);
+  \draw[<->,thick,cgray] (fmt) -- node[below,sloped,font=\ttfamily\scriptsize]{strftime / strptime} (dt);
+  \draw[<->,thick,cgray] (ep) -- node[above,sloped,font=\ttfamily\scriptsize]{timestamp / fromtimestamp} (dt);
+  \draw[<->,thick,cgray] (dd) -- node[below,sloped,font=\ttfamily\scriptsize]{.date() .time() / combine} (dt);
+\end{tikzpicture}
+\end{center}
+% MD-BEGIN
+% ```mermaid
+% flowchart LR
+%     ISO["str (ISO)"] <-- "isoformat / fromisoformat" --> DT["datetime"]
+%     FMT["str (custom)"] <-- "strftime / strptime" --> DT
+%     EP["epoch float"] <-- "timestamp / fromtimestamp" --> DT
+%     DD["date + time"] <-- ".date() .time() / combine" --> DT
+% ```
+% MD-END
+
+\begin{pycode}
+a = datetime(2025, 3, 14, 9, 0, tzinfo=timezone.utc)
+print(a.timestamp())
+print(datetime.fromtimestamp(1_700_000_000, tz=timezone.utc).isoformat())
+print(a.strftime("%Y-%m-%dT%H:%M:%SZ"))
+print(a.timetuple().tm_yday)
+\end{pycode}
+\begin{rawcode}
+1741942800.0
+2023-11-14T22:13:20+00:00
+2025-03-14T09:00:00Z
+73
+\end{rawcode}
+
+\begin{trap}
+\code{datetime.fromtimestamp(secs)} \emph{without} \code{tz=} gives a naive datetime in your local
+zone. For API timestamps, always pass \code{tz=timezone.utc}. Likewise \code{timestamp()} on a naive
+datetime assumes local time, which is a silent source of off-by-hours errors.
+\end{trap}
+
+A short AI-flavored example: duration of a run from ISO log timestamps.
+
+\begin{pycode}
+lines = [
+    "2025-03-14T09:00:01Z start run=a",
+    "2025-03-14T09:00:03.500Z first token run=a",
+    "2025-03-14T09:02:11Z done run=a",
+]
+stamps = [datetime.fromisoformat(l.split()[0]) for l in lines]
+print([str(y - x) for x, y in zip(stamps, stamps[1:])])
+print((stamps[-1] - stamps[0]).total_seconds())
+print(date(1990, 5, 17) + timedelta(days=10000))
+\end{pycode}
+\begin{rawcode}
+['0:00:02.500000', '0:02:07.500000']
+130.0
+2017-10-02
+\end{rawcode}
+
+The last line answers a typical ``when am I 10{,}000 days old'' question for someone born on
+17 May 1990.
+
+% ------------------------------------------------------------
+\section{Alternative Modules}
+
+If the standard library feels clumsy, these packages exist. None is needed for this series.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+\textbf{Package} & \textbf{What it is good for} \\
+\midrule
+\code{python-dateutil} & parses almost any date text; relative dates such as ``next month'' \\
+\code{arrow} & one friendly object for create, shift, format \\
+\code{whenever} & newer, fast library (written in Rust) with clear naive/aware types \\
+\code{iso8601} & fills gaps in ISO 8601 parsing \\
+\code{astropy.time}, \code{TAI64} & astronomy-size dates, atomic time \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{gamerule}
+Before you add a date library, try \code{datetime} with \code{timezone.utc} and
+\code{fromisoformat}. It covers most log and API work. Use \code{dateutil.parser} only for messy
+human-written dates you cannot control.
+\end{gamerule}
+
+% ------------------------------------------------------------
+\section{Review and what comes next}
+
+You can now tell a date, a time, a datetime and a timedelta apart, convert between ISO strings,
+custom strings, epoch numbers and objects, and you know to keep UTC at the core. The next chapter
+opens files: reading, writing and moving data on disk.
+
+\begin{practice}
+\begin{enumerate}[nosep,leftmargin=*]
+  \item Which of the years 1800, 2000, 2023 and 2100 are leap years? Check with code.
+  \item Create the date of your birthday, print its ISO form and its weekday name, and compute the
+        date on which you turn 10{,}000 days old.
+  \item Why does \code{date(2025, 3, 1) - date(2025, 2, 1)} have type \code{timedelta} and not
+        \code{int}? Which attribute gives a number of days?
+  \item Parse \code{"07/08/2025"} two times, once as day-first and once as month-first. Print both
+        results in ISO format.
+  \item Write one line that turns the API field \code{1700000000} into an ISO string in UTC.
+  \item What happens if you subtract \code{datetime.now()} from \code{datetime.now(timezone.utc)}?
+        Why is that error a good thing?
+\end{enumerate}
+\end{practice}
+
+\begin{achievement}{Time Keeper}
+\begin{itemize}[nosep,leftmargin=*]
+  \item Choose the right type among \code{date}, \code{time}, \code{datetime} and \code{timedelta}.
+  \item Parse and format timestamps with ISO, \code{strptime} and \code{strftime}.
+  \item Convert between epoch seconds, aware datetimes and strings.
+  \item Explain naive versus aware datetimes and why you store UTC.
+  \item Time a piece of code correctly with \code{perf\_counter}.
+\end{itemize}
+\end{achievement}

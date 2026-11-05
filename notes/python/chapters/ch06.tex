@@ -1,0 +1,706 @@
+\chapter{If and Match}
+
+\textbf{What this chapter gives you:} the first tools that let a program \emph{decide}. You will write
+comments, split long lines, branch with \code{if}/\code{elif}/\code{else}, test membership with \code{in},
+and pick between patterns with \code{match}. Truthiness, \code{None}, and the one-line \code{a if c else b}
+get extra attention, because they are the usual sources of silent bugs.
+
+%RELATED: 2, 3, 4, 7, 9
+
+% ------------------------------------------------------------
+\section{Comment with \#}
+
+A comment starts at \code{\#} and runs to the end of the line. Python ignores it. Use comments to say
+\emph{why}, not to repeat what the code already says. There is no block comment: start every line with
+\code{\#}. Inside a string, \code{\#} is just a character.
+
+\begin{pycode}
+>>> max_context = 200_000   # tokens the model can read at once
+>>> note = "use # for comments"
+>>> note
+'use # for comments'
+\end{pycode}
+
+A triple-quoted string that stands alone is not a comment. It is a string value that Python builds and
+throws away. Its proper use is as documentation (Chapter 14).
+
+% ------------------------------------------------------------
+\section{Continue lines with \textbackslash{} and brackets}
+
+Keep lines under about 80 characters. If an expression is too long, you have two choices.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X l@{}}
+\toprule
+\textbf{Method} & \textbf{How} & \textbf{Verdict} \\
+\midrule
+Backslash & put \code{\textbackslash} as the very last character of the line & works, but fragile \\
+Brackets  & break the line anywhere inside \code{( )}, \code{[ ]}, or \code{\{ \}} & preferred \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{pycode}
+>>> total = 1200 + \
+...         350 + \
+...         40
+>>> total
+1590
+>>> total = (1200 +
+...          350 +
+...          40)
+>>> total
+1590
+\end{pycode}
+
+\begin{trap}[: a space after the backslash]
+A backslash followed by even one trailing space is a \code{SyntaxError}. You cannot see the space, which
+makes it painful. Prefer brackets and you never meet this bug.
+\end{trap}
+
+Brackets also help with long prompts. Two string literals side by side are joined into one:
+
+\begin{pycode}
+>>> prompt = ("You are a helpful assistant. "
+...           "Answer in one sentence.")
+>>> prompt
+'You are a helpful assistant. Answer in one sentence.'
+\end{pycode}
+
+\begin{trap}[: a missing comma joins strings]
+In a list, \code{["a" "b"]} is a one-item list containing \code{"ab"}. A forgotten comma between two
+string items silently merges them. You get no error, only a shorter list.
+\end{trap}
+
+% ------------------------------------------------------------
+\section{Compare with if, elif, and else}
+
+\subsection{The shape of an if statement}
+
+An \code{if} line ends with a colon. The lines that belong to it are indented by the same amount, and
+the standard is four spaces. Never mix tabs and spaces. Indentation \emph{is} the structure: when the
+indent goes back, the block ends.
+
+%MD<
+% ```mermaid
+% flowchart TD
+%     A{"status == 200?"} -- True --> A1["print('ok')"]
+%     A -- False --> B{"status == 429?"}
+%     B -- True --> B1["print('rate limited')"]
+%     B -- False --> C{"status >= 500?"}
+%     C -- True --> C1["print('server error')"]
+%     C -- False --> D["else: print('other')"]
+% ```
+%MD>
+\begin{center}
+\begin{tikzpicture}[dec/.style={draw=cblue,minimum width=30mm,minimum height=6.5mm,fill=cblue!8,font=\ttfamily\scriptsize,inner sep=1pt},
+  act/.style={draw=cgreen,fill=cgreen!10,rounded corners=2pt,font=\ttfamily\scriptsize,minimum height=6mm,inner sep=3pt},
+  lab/.style={font=\sffamily\tiny,text=cgray},>=Stealth]
+  \node[dec] (d1) at (0,0)    {status == 200};
+  \node[dec] (d2) at (0,-1.5) {status == 429};
+  \node[dec] (d3) at (0,-3.0) {status >= 500};
+  \node[act] (e)  at (0,-4.4) {else: print("other")};
+  \node[act] (a1) at (4.6,0)    {print("ok")};
+  \node[act] (a2) at (4.6,-1.5) {print("rate limited")};
+  \node[act] (a3) at (4.6,-3.0) {print("server error")};
+  \draw[->] (d1) -- node[lab,right]{False} (d2);
+  \draw[->] (d2) -- node[lab,right]{False} (d3);
+  \draw[->] (d3) -- node[lab,right]{False} (e);
+  \draw[->] (d1) -- node[lab,above]{True} (a1);
+  \draw[->] (d2) -- node[lab,above]{True} (a2);
+  \draw[->] (d3) -- node[lab,above]{True} (a3);
+  \node[lab,anchor=west,align=left] at (6.8,-1.5) {tests run top to bottom;\\the first True wins;\\only one branch runs};
+\end{tikzpicture}
+\end{center}
+
+\begin{pycode}
+status = 429
+if status == 200:
+    print("ok")
+elif status == 429:
+    print("rate limited: wait and retry")
+elif status >= 500:
+    print("server error")
+else:
+    print("other:", status)
+\end{pycode}
+\begin{rawcode}
+rate limited: wait and retry
+\end{rawcode}
+
+\code{elif} and \code{else} are optional. Tests inside tests are allowed, one more indent level each,
+but flat \code{elif} chains read better than deep nesting.
+
+\subsection{Comparison operators}
+
+Every comparison produces a \code{bool}.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+\textbf{Operator} & \textbf{Meaning} & \textbf{Watch for} \\
+\midrule
+\code{==} & equal in value        & \code{5 == 5.0} is \code{True}; \code{"5" == 5} is \code{False} \\
+\code{!=} & not equal             & the opposite of \code{==} \\
+\code{<} \code{<=} \code{>} \code{>=} & ordering & mixing \code{int} and \code{str} raises \code{TypeError} \\
+\code{is} / \code{is not} & same object   & use it for \code{None}, not for numbers or strings \\
+\code{=} & \emph{assignment}     & \code{if x = 5:} is a \code{SyntaxError} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{pycode}
+>>> 5 == 5.0, "5" == 5
+(True, False)
+>>> 3 < "4"
+Traceback (most recent call last):
+  ...
+TypeError: '<' not supported between instances of 'int' and 'str'
+\end{pycode}
+
+\subsection{and, or, not}
+
+Use \code{and}, \code{or}, and \code{not} to combine tests. Comparisons are worked out first, so no
+parentheses are needed, but add them when a reader might hesitate. Order of strength: \code{not}, then
+\code{and}, then \code{or}.
+
+\begin{pycode}
+>>> tokens, has_key = 800, True
+>>> tokens < 1000 and has_key
+True
+>>> tokens > 1000 or not has_key
+False
+\end{pycode}
+
+\code{and} and \code{or} are \emph{short-circuit} operators. They stop as soon as the answer is known, and
+they return one of their two \emph{operands}, not necessarily a \code{bool}.
+
+\begin{typecheck}[: what and / or / not return]
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X l@{}}
+\toprule
+\textbf{Expression} & \textbf{Rule} & \textbf{Type back} \\
+\midrule
+\code{a and b} & if \code{a} is falsy, return \code{a}; otherwise return \code{b} & type of an operand \\
+\code{a or b}  & if \code{a} is truthy, return \code{a}; otherwise return \code{b} & type of an operand \\
+\code{not a}   & \code{True} if \code{a} is falsy, else \code{False} & always \code{bool} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{typecheck}
+
+\begin{pycode}
+>>> "" or "default"
+'default'
+>>> "hello" or "default"
+'hello'
+>>> "hi" and 42
+42
+>>> 0 and 1 / 0
+0
+>>> not []
+True
+\end{pycode}
+
+The \code{0 and 1 / 0} line never divides, because the left side already decided the result.
+
+\begin{trap}[: \texttt{x == "a" or "b"} is always truthy]
+\code{model == "claude" or "gemini"} means \code{(model == "claude") or "gemini"}. The right side is a
+non-empty string, so the whole expression is never falsy. Each side of \code{or} must be a full test, or
+use \code{in}.
+\end{trap}
+
+\begin{pycode}
+>>> model = "gpt"
+>>> model == "claude" or "gemini"
+'gemini'
+>>> model == "claude" or model == "gemini"
+False
+>>> model in ("claude", "gemini")
+False
+\end{pycode}
+
+\subsection{Chained comparisons}
+
+Python lets you write a range test the way you would on paper. \code{lo < x < hi} means
+\code{lo < x and x < hi}, and \code{x} is evaluated once.
+
+%MD<
+% ```text
+%  4    5         7                    10   11
+%  |----o=========X====================o----|     5 < x < 10  with x = 7
+%       (5 and 10 are excluded: open ends)
+% ```
+%MD>
+\begin{center}
+\begin{tikzpicture}[>=Stealth,font=\sffamily\scriptsize]
+  \draw[->,cgray] (0,0) -- (8.2,0);
+  \foreach \v/\x in {4/0,5/1.1,7/3.3,10/6.6,11/7.7} {
+    \draw[cgray] (\x,-0.08) -- (\x,0.08);
+    \node[below=2pt,font=\ttfamily\scriptsize] at (\x,-0.08) {\v};
+  }
+  \draw[line width=3pt,cgreen] (1.1,0) -- (6.6,0);
+  \draw[fill=white,draw=cgreen,thick] (1.1,0) circle (0.09);
+  \draw[fill=white,draw=cgreen,thick] (6.6,0) circle (0.09);
+  \fill[cred] (3.3,0) circle (0.11);
+  \node[above=4pt,text=cred] at (3.3,0.05) {x = 7};
+  \node[above=4pt,text=cgreen!60!black] at (5.5,0.05) {\code{5 < x < 10} is True here};
+\end{tikzpicture}
+\end{center}
+
+\begin{pycode}
+>>> temperature = 0.7
+>>> 0 <= temperature <= 2
+True
+>>> 5 < 7 < 10 < 999
+True
+\end{pycode}
+
+\subsection{What is true?}
+
+An \code{if} does not need a real \code{bool}. Python asks every object ``are you empty or zero?''.
+Empty and zero things are \emph{falsy}; everything else is \emph{truthy}. \code{bool(x)} shows the verdict.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+\textbf{Falsy (counts as False)} & \textbf{Truthy (counts as True)} \\
+\midrule
+\code{False}, \code{None} & \code{True} \\
+\code{0}, \code{0.0} & any other number, including \code{-1} and \code{0.1} \\
+\code{""} (empty string) & any non-empty string, even \code{" "}, \code{"0"}, \code{"False"} \\
+\code{[]}, \code{()}, \code{\{\}}, \code{set()}, \code{b""} & any container with at least one item, even \code{[0]} or \code{[None]} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{pycode}
+>>> [bool(v) for v in (0, 0.0, "", [], (), {}, set(), None)]
+[False, False, False, False, False, False, False, False]
+>>> [bool(v) for v in ("0", "False", " ", [0], [None], 0.1)]
+[True, True, True, True, True, True]
+\end{pycode}
+
+\begin{gamerule}
+Test emptiness the Python way: \code{if messages:} rather than \code{if len(messages) > 0:}. It also
+works for strings, dicts, and sets.
+\end{gamerule}
+
+\subsection{None is not the same as empty or zero}
+
+\code{None} means ``no value was given''. It is falsy, but so are \code{0} and \code{""}, and those
+are real, valid values. To ask ``was anything given?'' test identity: \code{x is None} or
+\code{x is not None}.
+
+%MD<
+% ```text
+%            value        if value:      if value is not None:
+%            None            False            False
+%            0               False            True    <- valid temperature!
+%            ""              False            True    <- valid empty string
+%            0.7             True             True
+% ```
+%MD>
+\begin{center}
+\begin{tabularx}{0.8\linewidth}{@{}l c c@{}}
+\toprule
+\textbf{value} & \code{if value:} & \code{if value is not None:} \\
+\midrule
+\code{None} & \xmark\ False & \xmark\ False \\
+\code{0}    & \xmark\ False & \cmark\ True (valid temperature) \\
+\code{""}   & \xmark\ False & \cmark\ True (valid empty string) \\
+\code{0.7}  & \cmark\ True  & \cmark\ True \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{boss}[: a falsy value that is perfectly valid]
+A temperature of \code{0} is a real setting, yet it is falsy, so \code{if temperature:} treats it like
+``not provided''. The same bug hides in \code{temperature or 1.0}, which swaps a valid \code{0} for
+\code{1.0}.\\[2pt]
+\textbf{Strategy:} when \code{None} means ``missing'', test \code{is None} / \code{is not None}. Use plain
+truthiness only when ``empty or zero'' really should be treated as ``nothing''.
+\end{boss}
+
+\begin{pycode}
+for temperature in (0, 0.7, None):
+    wrong = temperature or 1.0
+    right = 1.0 if temperature is None else temperature
+    print(temperature, "wrong:", wrong, "right:", right)
+\end{pycode}
+\begin{rawcode}
+0 wrong: 1.0 right: 0
+0.7 wrong: 0.7 right: 0.7
+None wrong: 1.0 right: 1.0
+\end{rawcode}
+
+(The \code{for} loop just repeats the block once per value; Chapter 7 explains it.)
+
+\subsection{Conditional expressions: \texttt{a if cond else b}}
+
+When you only need to \emph{choose a value}, a one-line form avoids a four-line \code{if}. The order is
+unusual: the value for true comes first, the test is in the middle, and the value for false is last.
+Python runs the test first.
+
+%MD<
+% ```text
+%     "long"      if   tokens > 1000   else   "short"
+%       ^                   ^                    ^
+%   (2) used if         (1) test runs        (2) used if
+%       True                first                False
+% ```
+%MD>
+\begin{center}
+\begin{tikzpicture}[blk/.style={draw=#1,fill=#1!10,rounded corners=2pt,font=\ttfamily\small,minimum height=7mm,inner sep=4pt},
+  kw/.style={font=\ttfamily\small,text=cpurple},
+  num/.style={circle,fill=cgold,text=white,font=\sffamily\scriptsize\bfseries,inner sep=1.5pt},
+  lab/.style={font=\sffamily\scriptsize,text=cgray,align=center},>=Stealth]
+  \node[blk=cgreen] (t) at (0,0) {"long"};
+  \node[kw] (if) at (1.7,0) {if};
+  \node[blk=cblue] (c) at (4.0,0) {tokens > 1000};
+  \node[kw] (el) at (6.3,0) {else};
+  \node[blk=cred] (f) at (7.9,0) {"short"};
+  \node[num] at (4.0,1.0) {1};
+  \node[lab] at (4.0,1.6) {test runs first};
+  \node[num] at (0,1.0) {2};
+  \node[lab] at (0,1.6) {result if True};
+  \node[num] at (7.9,1.0) {2};
+  \node[lab] at (7.9,1.6) {result if False};
+  \draw[->,cgray] (c.north) -- (4.0,0.8);
+\end{tikzpicture}
+\end{center}
+
+\begin{pycode}
+>>> tokens = 1500
+>>> label = "long" if tokens > 1000 else "short"
+>>> label
+'long'
+>>> print("over limit" if tokens > 4096 else "fits")
+fits
+\end{pycode}
+
+\begin{typecheck}[: what a conditional expression gives back]
+It is an \emph{expression}: it produces one value, so you can assign it, pass it to a function, or put
+it inside an f-string. The two branches may be different types; the result has the type of whichever
+branch ran. It has \code{else} always, because it must produce a value.
+\end{typecheck}
+
+\begin{trap}[: written backwards, it runs and is wrong]
+Putting the test first looks natural but is valid Python with a different meaning. The line below does not
+raise an error. It treats \code{"long"} as the test, which is always truthy, so you get
+\code{tokens > 1000} (a \code{bool}) instead of a label.
+\end{trap}
+
+\begin{pycode}
+>>> tokens = 1500
+>>> tokens > 1000 if "long" else "short"
+True
+>>> label = "long" if tokens > 1000 else "short"
+\end{pycode}
+
+\begin{trap}[: it binds loosely]
+The whole thing is chosen \emph{after} the surrounding \code{+} is evaluated. Add parentheses when you mix
+them.
+\end{trap}
+
+\begin{pycode}
+>>> flag = False
+>>> "Result: " + "yes" if flag else "no"
+'no'
+>>> "Result: " + ("yes" if flag else "no")
+'Result: no'
+\end{pycode}
+
+\begin{gamerule}
+Use \code{a if c else b} to pick between two values. Use a normal \code{if} block when you want to
+\emph{do} something (call functions, change variables). Do not chain several in one line.
+\end{gamerule}
+
+% ------------------------------------------------------------
+\section{Do multiple comparisons with in}
+
+Many \code{or}-ed equality tests collapse into one \code{in}. \code{x in container} gives a \code{bool}.
+What ``in'' means depends on the container.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X l@{}}
+\toprule
+\textbf{Container} & \textbf{\code{in} checks} & \textbf{Speed} \\
+\midrule
+\code{str}            & is it a \emph{substring}? (\code{"at" in "cat"} is True) & scans \\
+\code{list}, \code{tuple} & is it equal to an item? (\code{"at" in ["cat"]} is False) & scans \\
+\code{set}            & is it an item?   & instant \\
+\code{dict}           & is it a \emph{key}? (values are ignored) & instant \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{pycode}
+>>> model = "claude-haiku-5-5"
+>>> "haiku" in model
+True
+>>> allowed = {"claude-haiku-5-5", "claude-opus-5-5"}
+>>> model in allowed
+True
+>>> limits = {"input": 100, "output": 20}
+>>> "input" in limits, 100 in limits
+(True, False)
+>>> "at" in "cat", "at" in ["cat"]
+(True, False)
+>>> "gpt" not in allowed
+True
+\end{pycode}
+
+\begin{gamerule}
+If you test membership many times against a fixed collection, store it in a \code{set}. Sets check
+instantly; lists check one item at a time (Chapter 9).
+\end{gamerule}
+
+% ------------------------------------------------------------
+\section{The walrus operator}
+
+\code{name := expression} (Python 3.8+) assigns \emph{and} gives back the value, so you can test and
+keep a result in one step. It looks like a walrus lying on its side.
+
+\begin{pycode}
+>>> reply = "x" * 120
+>>> limit = 100
+>>> if (over := len(reply) - limit) > 0:
+...     print("trim", over, "characters")
+trim 20 characters
+>>> over
+20
+\end{pycode}
+
+The variable stays alive after the \code{if}. It also works in \code{while} loops (Chapter 7).
+
+\begin{trap}[: parentheses decide what is assigned]
+Without parentheses around the assignment, the walrus grabs the whole comparison, so you store a
+\code{bool}, not the number.
+\end{trap}
+
+\begin{pycode}
+>>> reply, limit = "x" * 120, 100
+>>> if over := len(reply) - limit > 0:
+...     print(over)
+True
+\end{pycode}
+
+% ------------------------------------------------------------
+\section{Match}
+
+\code{match} (Python 3.10+) compares one \emph{subject} against a list of \emph{patterns}, top to bottom.
+The first pattern that fits runs its block and the whole \code{match} ends. There is no fall-through and
+no \code{break}. \code{case \_} is the default.
+
+%MD<
+% ```mermaid
+% flowchart TD
+%     S(["match status:"]) --> C1{"case 200?"}
+%     C1 -- yes --> B1["msg = 'ok'"]
+%     C1 -- no --> C2{"case 401 | 403?"}
+%     C2 -- yes --> B2["msg = 'not allowed'"]
+%     C2 -- no --> C3{"case 404?"}
+%     C3 -- yes --> B3["msg = 'missing'"]
+%     C3 -- no --> C4["case _  (always fits)"] --> B4["msg = 'unknown'"]
+% ```
+%MD>
+\begin{center}
+\begin{tikzpicture}[cs/.style={draw=cblue,fill=cblue!8,font=\ttfamily\scriptsize,minimum width=26mm,minimum height=6.5mm,inner sep=2pt},
+  bd/.style={draw=cgreen,fill=cgreen!10,rounded corners=2pt,font=\ttfamily\scriptsize,minimum height=6.5mm,inner sep=3pt},
+  lab/.style={font=\sffamily\tiny,text=cgray},>=Stealth]
+  \node[draw=cgray,rounded corners=6pt,font=\ttfamily\scriptsize,inner sep=3pt] (s) at (0,0.9) {match status:};
+  \node[cs] (c1) at (0,0)    {case 200};
+  \node[cs] (c2) at (0,-1.0) {case 401 | 403};
+  \node[cs] (c3) at (0,-2.0) {case 404};
+  \node[cs,fill=cgold!15,draw=cgold] (c4) at (0,-3.0) {case \_};
+  \node[bd] (b1) at (4.4,0)    {msg = "ok"};
+  \node[bd] (b2) at (4.4,-1.0) {msg = "not allowed"};
+  \node[bd] (b3) at (4.4,-2.0) {msg = "missing"};
+  \node[bd] (b4) at (4.4,-3.0) {msg = "unknown"};
+  \draw[->] (s) -- (c1);
+  \foreach \a/\b in {c1/c2,c2/c3,c3/c4} \draw[->] (\a) -- node[lab,right]{no} (\b);
+  \foreach \a/\b in {c1/b1,c2/b2,c3/b3,c4/b4} \draw[->] (\a) -- node[lab,above]{fits} (\b);
+  \node[lab,anchor=west,align=left] at (6.9,-1.5) {first fit wins;\\then the match is over};
+\end{tikzpicture}
+\end{center}
+
+\subsection{Simple matches}
+
+\begin{pycode}
+status = 404
+match status:
+    case 200:
+        msg = "ok"
+    case 401 | 403:
+        msg = "not allowed"
+    case 404:
+        msg = "missing"
+    case _:
+        msg = "unknown"
+print(msg)
+\end{pycode}
+\begin{rawcode}
+missing
+\end{rawcode}
+
+\code{401 | 403} is an \emph{or-pattern}: either value fits. The same job can be done with an
+\code{if}/\code{elif} chain or, for pure lookup, a dictionary. Pick by readability.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X X@{}}
+\toprule
+\textbf{Tool} & \textbf{Best when} & \textbf{Default case} \\
+\midrule
+\code{if}/\code{elif}/\code{else} & conditions are ranges or complex tests & \code{else} \\
+\code{match}/\code{case}         & you compare against shapes or exact values & \code{case \_} \\
+\code{dict.get(key, default)}    & you only map a value to another value & the second argument \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{pycode}
+>>> messages = {200: "ok", 404: "missing"}
+>>> messages.get(500, "unknown")
+'unknown'
+\end{pycode}
+
+\subsection{Structural matches}
+
+``Structural'' means the pattern describes the \emph{shape} of the subject and can pull values out of it.
+A sequence pattern matches a list or tuple of the same length. A name in a pattern \emph{captures} that
+part into a variable. \code{*rest} captures the remaining items as a list. A \code{case} may end with
+\code{if condition}, called a \emph{guard}.
+
+\begin{pycode}
+for line in ("quit", "add gpt-x", "add claude-a 3", "list all now"):
+    parts = line.split()
+    match parts:
+        case ["quit"]:
+            print("bye")
+        case ["add", name]:
+            print("add one:", name)
+        case ["add", name, *rest]:
+            print("add", name, "with extras", rest)
+        case [cmd, *_] if cmd == "list":
+            print("listing")
+        case _:
+            print("unknown")
+\end{pycode}
+\begin{rawcode}
+bye
+add one: gpt-x
+add claude-a with extras ['3']
+listing
+\end{rawcode}
+
+\begin{typecheck}[: pattern cheat sheet]
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X l@{}}
+\toprule
+\textbf{Pattern} & \textbf{Fits when the subject is} & \textbf{Binds} \\
+\midrule
+\code{200}, \code{"ok"}, \code{None} & equal to that literal (\code{None} by identity) & nothing \\
+\code{401 | 403}            & any one of the alternatives & nothing \\
+\code{x}                    & \emph{anything} & \code{x} \\
+\code{\_}                   & anything & nothing \\
+\code{[a, b]} or \code{a, b} & a list or tuple of exactly 2 (not a \code{str}) & \code{a}, \code{b} \\
+\code{[a, *rest]}           & a sequence of 1 or more & \code{a}, \code{rest} (list) \\
+\code{\{"k": v\}}            & a dict with key \code{"k"}; extra keys are fine & \code{v} \\
+\code{int()}, \code{str()}  & an instance of that type & nothing \\
+\code{case p if cond}       & \code{p} fits and \code{cond} is true & as \code{p} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{typecheck}
+
+\subsection{Matching JSON-like data}
+
+Model replies and tool calls are dicts. A mapping pattern checks keys and values and pulls out what you
+need. Unlike sequences, a dict may have extra keys.
+
+\begin{pycode}
+events = [
+    {"type": "text", "text": "Hello"},
+    {"type": "tool_use", "name": "search", "input": {"q": "tokens"}},
+    {"type": "ping"},
+    42,
+]
+for event in events:
+    match event:
+        case {"type": "text", "text": body}:
+            print("text:", body)
+        case {"type": "tool_use", "name": name}:
+            print("tool call:", name)
+        case {"type": other}:
+            print("ignored:", other)
+        case int() | float():
+            print("a number")
+\end{pycode}
+\begin{rawcode}
+text: Hello
+tool call: search
+ignored: ping
+a number
+\end{rawcode}
+
+If no case fits and there is no \code{case \_}, the \code{match} simply does nothing. It is not an
+error.
+
+\begin{trap}[: a bare name captures, it does not compare]
+In a pattern, a plain name such as \code{LIMIT} is a \emph{capture}: it always fits and overwrites the
+variable. To compare against a constant, use a dotted name (\code{Config.LIMIT}), a literal, or a guard.
+\end{trap}
+
+\begin{pycode}
+>>> LIMIT = 100
+>>> match 5:
+...     case LIMIT:
+...         print("matched; LIMIT is now", LIMIT)
+matched; LIMIT is now 5
+>>> match 5:
+...     case n if n == 100:
+...         print("equal to 100")
+...     case _:
+...         print("not 100")
+not 100
+\end{pycode}
+
+\begin{trap}[: names are bound even when the guard fails]
+A pattern may capture a name and then lose to its guard. The capture stays behind.
+\end{trap}
+
+\begin{pycode}
+>>> match [3, 5]:
+...     case x, y if y > 6:
+...         print("big")
+...     case _:
+...         print("no match")
+no match
+>>> x, y
+(3, 5)
+\end{pycode}
+
+\begin{practice}
+\begin{enumerate}
+\item Write an \code{if}/\code{elif}/\code{else} that prints \code{"too low"}, \code{"too high"}, or
+\code{"just right"} when \code{guess} is compared with \code{secret}.
+\item What does \code{"yes" and 0} evaluate to? What does \code{"" or None} evaluate to?
+\item Rewrite \code{label = "big" if n > 10 else "small"} as a normal four-line \code{if}/\code{else}.
+Then explain what \code{n > 10 if "big" else "small"} would return.
+\item Why is \code{if temperature:} wrong when 0 is a legal setting? Write the correct test.
+\item Write a \code{match} that handles the strings \code{"start"} and \code{"stop"}, plus a default.
+\item What is the difference between \code{"at" in "cat"} and \code{"at" in ["cat"]}?
+\end{enumerate}
+\end{practice}
+
+\begin{achievement}{Fork in the Road}
+You can now:
+\begin{itemize}
+\item add comments and split long lines with brackets;
+\item build \code{if}/\code{elif}/\code{else} ladders and chained comparisons;
+\item predict truthiness, and test \code{None} with \code{is None};
+\item write \code{a if cond else b} in the right order, and spot it written backwards;
+\item use \code{in}, the walrus, and \code{match} with sequence and mapping patterns.
+\end{itemize}
+\end{achievement}

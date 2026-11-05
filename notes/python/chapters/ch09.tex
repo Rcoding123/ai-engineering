@@ -1,0 +1,705 @@
+\chapter{Dictionaries and Sets}
+
+\textbf{What this chapter gives you:} the two containers that find things by \emph{value} instead of by
+position. A \code{dict} maps keys to values and is the shape of nearly all JSON, API requests, model replies,
+and configuration. A \code{set} is a bag of unique items with fast membership tests and set algebra. After
+this chapter you can read any nested API response and pull out one number safely.
+
+%RELATED: 6, 7, 8, 10, 11, 12
+
+% ------------------------------------------------------------
+\section{Dictionaries}
+
+A dictionary stores \emph{key $\to$ value} pairs. You ask for a value by its key, not by a position.
+Keys are unique. Since Python 3.7 a dict also remembers the order in which keys were added.
+
+%MD<
+% ```text
+%   list: find by POSITION            dict: find by KEY
+%
+%   ["haiku", "sonnet"]               {"fast": "haiku", "smart": "sonnet"}
+%     0        1                        "fast"   -> "haiku"
+%     |        |                        "smart"  -> "sonnet"
+%   m[0]     m[1]                     m["fast"]   m["smart"]
+% ```
+%MD>
+\begin{center}
+\begin{tikzpicture}[k/.style={draw=cgold,fill=cgold!15,minimum width=14mm,minimum height=7mm,font=\ttfamily\small},
+  v/.style={draw=cblue,fill=cblue!8,minimum width=18mm,minimum height=7mm,font=\ttfamily\small},
+  lab/.style={font=\sffamily\scriptsize,text=cgray},>=Stealth]
+  \node[lab] at (1.9,2.2) {\textbf{list}: look up by position};
+  \node[k] (i0) at (0.2,1.3) {0};  \node[v] (v0) at (2.4,1.3) {"haiku"};
+  \node[k] (i1) at (0.2,0.4) {1};  \node[v] (v1) at (2.4,0.4) {"sonnet"};
+  \draw[->,cgray] (i0) -- (v0);   \draw[->,cgray] (i1) -- (v1);
+  \node[lab] at (1.3,-0.4) {\code{m[1]} gives \code{"sonnet"}};
+  \node[lab] at (8.4,2.2) {\textbf{dict}: look up by key};
+  \node[k,minimum width=18mm] (k0) at (6.6,1.3) {"fast"};  \node[v] (w0) at (9.4,1.3) {"haiku"};
+  \node[k,minimum width=18mm] (k1) at (6.6,0.4) {"smart"}; \node[v] (w1) at (9.4,0.4) {"sonnet"};
+  \draw[->,cgray] (k0) -- (w0);   \draw[->,cgray] (k1) -- (w1);
+  \node[lab] at (8.0,-0.4) {\code{m["smart"]} gives \code{"sonnet"}};
+\end{tikzpicture}
+\end{center}
+
+\subsection{Create with \{\} and dict()}
+
+\begin{pycode}
+>>> usage = {"input_tokens": 812, "output_tokens": 143}
+>>> usage["input_tokens"]
+812
+>>> same = dict(input_tokens=812, output_tokens=143)
+>>> same == usage
+True
+>>> type(usage), len(usage), {}
+(<class 'dict'>, 2, {})
+\end{pycode}
+
+\code{dict(name=value)} is handy, but the names must be legal variable names (no spaces, no hyphens, no
+reserved words). For keys like \code{"max-tokens"}, use the brace form. A trailing comma after the last
+pair is allowed.
+
+\subsection{Convert with dict()}
+
+\code{dict()} also accepts a sequence of two-item sequences. \code{zip()} (Chapter 8) is the usual way to
+make them.
+
+\begin{pycode}
+>>> dict([("a", 1), ("b", 2)])
+{'a': 1, 'b': 2}
+>>> dict(["ab", "cd"])
+{'a': 'b', 'c': 'd'}
+>>> dict(zip(["x", "y"], [10, 20]))
+{'x': 10, 'y': 20}
+>>> dict([("a", 1, 2)])
+Traceback (most recent call last):
+  ...
+ValueError: dictionary update sequence element #0 has length 3; 2 is required
+\end{pycode}
+
+\subsection{Add or change an item with [key]}
+
+Assigning to a key adds it when it is new and replaces the value when it exists. There is no
+out-of-range error as with lists. Duplicate keys in a literal keep the last value.
+
+\begin{pycode}
+>>> cfg = {"model": "haiku"}
+>>> cfg["max_tokens"] = 1000
+>>> cfg["model"] = "sonnet"
+>>> cfg
+{'model': 'sonnet', 'max_tokens': 1000}
+>>> {"a": 1, "a": 2}
+{'a': 2}
+>>> list(cfg)
+['model', 'max_tokens']
+\end{pycode}
+
+\begin{typecheck}[: what can be a key]
+A key must be \emph{hashable}, which in practice means immutable: \code{str}, \code{int}, \code{float},
+\code{bool}, \code{None}, \code{bytes}, \code{frozenset}, and tuples whose items are hashable. A list, dict,
+or set cannot be a key. Values can be anything.
+\end{typecheck}
+
+\begin{pycode}
+>>> {(1, 2): "tuple key works"}
+{(1, 2): 'tuple key works'}
+>>> {[1, 2]: "no"}
+Traceback (most recent call last):
+  ...
+TypeError: unhashable type: 'list'
+\end{pycode}
+
+\begin{trap}[: keys that are equal count as the same key]
+\code{1}, \code{1.0}, and \code{True} are equal, so they collide. The first key object stays, and the last
+value wins.
+\end{trap}
+
+\begin{pycode}
+>>> {1: "a", True: "b", 1.0: "c"}
+{1: 'c'}
+\end{pycode}
+
+\subsection{Get an item by [key] or with get()}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+\textbf{Expression} & \textbf{Key present} & \textbf{Key missing} \\
+\midrule
+\code{d[k]}           & the value & raises \code{KeyError} \\
+\code{d.get(k)}       & the value & returns \code{None} \\
+\code{d.get(k, dflt)} & the value & returns \code{dflt} \\
+\code{k in d}         & \code{True} & \code{False} \\
+\code{d.pop(k)}       & value, and removes the pair & raises \code{KeyError} \\
+\code{d.pop(k, dflt)} & value, and removes the pair & returns \code{dflt} \\
+\code{d.setdefault(k, dflt)} & the value & stores \code{dflt} under \code{k}, then returns it \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{pycode}
+>>> resp = {"model": "claude-haiku-5-5", "stop_reason": "end_turn"}
+>>> resp["model"]
+'claude-haiku-5-5'
+>>> resp["usage"]
+Traceback (most recent call last):
+  ...
+KeyError: 'usage'
+>>> resp.get("usage") is None
+True
+>>> resp.get("usage", {})
+{}
+>>> "usage" in resp
+False
+\end{pycode}
+
+\begin{trap}[: \texttt{d.key} is not how dicts work]
+A dict is read with \emph{brackets} and a key: \code{d["model"]}. Dot access (\code{d.model}) looks for an
+\emph{attribute} and fails. SDK response objects are the opposite: they use dots
+(\code{response.usage}), while data parsed from JSON is a dict and uses brackets.
+\end{trap}
+
+\begin{pycode}
+>>> resp = {"model": "claude-haiku-5-5"}
+>>> resp.model
+Traceback (most recent call last):
+  ...
+AttributeError: 'dict' object has no attribute 'model'
+\end{pycode}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+\textbf{Syntax} & \textbf{Looks up} & \textbf{Fails with} \\
+\midrule
+\code{d["k"]}  & a dict key         & \code{KeyError} \\
+\code{obj.x}   & an attribute       & \code{AttributeError} \\
+\code{lst[0]}  & a list position    & \code{IndexError} \\
+\code{d.get("k")} & a dict key, safely & never; gives \code{None} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Nested dictionaries: reading JSON}
+
+Values can be dicts and lists, so data nests as deeply as you like. Read it with one subscript per level,
+left to right. The picture shows how \code{reply["content"][0]["text"]} walks down the tree.
+
+%MD<
+% ```mermaid
+% flowchart LR
+%     reply{{"reply (dict)"}} --> id["'id': 'msg_01'"]
+%     reply --> usage{{"'usage' (dict)"}}
+%     usage --> i1["'input_tokens': 812"]
+%     usage --> i2["'output_tokens': 143"]
+%     reply -- "['content']" --> content[["'content' (list)"]]
+%     content -- "[0]" --> item{{"item 0 (dict)"}}
+%     item --> ty["'type': 'text'"]
+%     item -- "['text']" --> tx["'text': 'Hello'"]
+% ```
+%MD>
+\begin{center}
+\begin{tikzpicture}[dict/.style={draw=cblue,fill=cblue!10,rounded corners=2pt,font=\ttfamily\scriptsize,inner sep=3pt},
+  lst/.style={draw=cgold,fill=cgold!15,rounded corners=2pt,font=\ttfamily\scriptsize,inner sep=3pt},
+  leaf/.style={draw=cgreen,fill=cgreen!10,rounded corners=2pt,font=\ttfamily\scriptsize,inner sep=3pt},
+  ed/.style={cgray},hot/.style={thick,cred},
+  el/.style={font=\ttfamily\tiny,text=cred,fill=white,inner sep=1pt},>=Stealth]
+  \node[dict] (r)  at (0,0) {reply (dict)};
+  \node[leaf] (id) at (4.2,1.9) {"id": "msg\_01"};
+  \node[dict] (us) at (4.2,0.5) {"usage" (dict)};
+  \node[lst]  (co) at (4.2,-1.4) {"content" (list)};
+  \node[leaf] (i1) at (8.0,1.0) {"input\_tokens": 812};
+  \node[leaf] (i2) at (8.0,0.0) {"output\_tokens": 143};
+  \node[dict] (d0) at (8.0,-1.4) {item 0 (dict)};
+  \node[leaf] (ty) at (11.7,-0.9) {"type": "text"};
+  \node[leaf] (tx) at (11.7,-1.9) {"text": "Hello"};
+  \draw[->,ed] (r) -- (id);
+  \draw[->,ed] (r) -- (us);
+  \draw[->,hot] (r) -- node[el,midway]{["content"]} (co);
+  \draw[->,ed] (us) -- (i1);
+  \draw[->,ed] (us) -- (i2);
+  \draw[->,hot] (co) -- node[el,midway]{[0]} (d0);
+  \draw[->,ed] (d0) -- (ty);
+  \draw[->,hot] (d0) -- node[el,midway]{["text"]} (tx);
+\end{tikzpicture}
+\end{center}
+
+\begin{pycode}
+>>> reply = {
+...     "id": "msg_01",
+...     "usage": {"input_tokens": 812, "output_tokens": 143},
+...     "content": [{"type": "text", "text": "Hello"}],
+... }
+>>> reply["usage"]["input_tokens"]
+812
+>>> reply["content"][0]["text"]
+'Hello'
+>>> reply["usage"]["total"]
+Traceback (most recent call last):
+  ...
+KeyError: 'total'
+>>> reply.get("error", {}).get("message", "no error")
+'no error'
+\end{pycode}
+
+\begin{boss}[: missing keys deep inside nested data]
+Real replies are not always complete. A key can be absent, or present with the value \code{None}, or a list
+can be empty. \code{reply["a"]["b"]["c"]} fails at the first gap with a \code{KeyError} or \code{TypeError}
+that does not say which level was wrong.\\[2pt]
+\textbf{Strategy:} decide per level. Use \code{[ ]} when absence is a bug (you want the loud error). Use
+\code{.get(key, \{\})} to step through levels that may be missing, then \code{.get(key, default)} at the last
+one. Check lists with \code{if items:} before \code{items[0]}. Remember \code{.get(k, d)} returns \code{d}
+only when the key is \emph{missing}, not when its value is \code{None}.
+\end{boss}
+
+\begin{pycode}
+>>> reply = {"usage": None, "content": []}
+>>> reply.get("usage", {}).get("input_tokens", 0)
+Traceback (most recent call last):
+  ...
+AttributeError: 'NoneType' object has no attribute 'get'
+>>> (reply.get("usage") or {}).get("input_tokens", 0)
+0
+>>> first = reply["content"][0] if reply["content"] else None
+>>> first is None
+True
+\end{pycode}
+
+\subsection{Iterate with for and in}
+
+Looping over a dict gives its \emph{keys}, in insertion order. \code{.keys()}, \code{.values()}, and
+\code{.items()} return \emph{views}: light objects that follow the dict and can be looped over or
+turned into lists.
+
+\begin{pycode}
+>>> tokens = {"prompt": 812, "completion": 143}
+>>> for name in tokens:
+...     print(name)
+prompt
+completion
+>>> list(tokens.keys()), list(tokens.values())
+(['prompt', 'completion'], [812, 143])
+>>> list(tokens.items())
+[('prompt', 812), ('completion', 143)]
+>>> for name, n in tokens.items():
+...     print(name, "->", n)
+prompt -> 812
+completion -> 143
+>>> sum(tokens.values())
+955
+\end{pycode}
+
+\begin{typecheck}[: what the loop variable is]
+\code{for k in d} and \code{for k in d.keys()}: the key. \code{for v in d.values()}: the value.
+\code{for item in d.items()}: a \code{(key, value)} \emph{tuple}, so unpack it in the \code{for} line
+(Chapter 8) with \code{for k, v in d.items()}.
+\end{typecheck}
+
+\begin{trap}[: do not add or remove keys while looping]
+Changing the number of keys during a loop raises \code{RuntimeError}. Loop over a copy of the keys
+(\code{list(d)}) when you must change the dict, or build a new dict.
+\end{trap}
+
+\begin{pycode}
+>>> d = {"a": 1, "b": 2}
+>>> for k in d:
+...     d[k + "x"] = 0
+Traceback (most recent call last):
+  ...
+RuntimeError: dictionary changed size during iteration
+>>> for k in list(d):
+...     d[k + "x"] = 0
+>>> sorted(d)
+['a', 'ax', 'axx', 'b', 'bx']
+\end{pycode}
+
+\subsection{Combine dictionaries}
+
+When two dicts share a key, the one applied \emph{last} wins. There are three ways to merge.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+\textbf{Way} & \textbf{Result} & \textbf{Changes the left dict?} \\
+\midrule
+\code{a | b}          & new dict & no \\
+\code{\{**a, **b\}}   & new dict & no \\
+\code{a.update(b)}    & \code{None} & yes, in place \\
+\code{a |= b}         & (assignment) & yes, in place \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{pycode}
+>>> base = {"model": "haiku", "temperature": 0.7}
+>>> override = {"temperature": 0.0, "max_tokens": 500}
+>>> base | override
+{'model': 'haiku', 'temperature': 0.0, 'max_tokens': 500}
+>>> {**base, **override} == base | override
+True
+>>> base
+{'model': 'haiku', 'temperature': 0.7}
+>>> base.update(override)
+>>> base["max_tokens"]
+500
+\end{pycode}
+
+This ``defaults, then overrides'' pattern is how you combine default request settings with per-call
+settings. All three ways are shallow: nested values are shared, not copied.
+
+\subsection{Delete items}
+
+\begin{pycode}
+>>> d = {"a": 1, "b": 2, "c": 3}
+>>> del d["a"]
+>>> d.pop("b")
+2
+>>> d.pop("zzz", None) is None
+True
+>>> d.popitem()
+('c', 3)
+>>> d
+{}
+>>> del d["x"]
+Traceback (most recent call last):
+  ...
+KeyError: 'x'
+\end{pycode}
+
+\code{popitem()} removes and returns the most recently added pair. \code{clear()} empties the dict in place;
+assigning \code{d = \{\}} makes a new empty dict and leaves other names pointing at the old one.
+
+\subsection{Test for a key with in}
+
+\code{in} on a dict checks \emph{keys}, never values. Test values with \code{v in d.values()}, which scans.
+
+\begin{pycode}
+>>> limits = {"input": 100, "output": 20}
+>>> "input" in limits, 100 in limits, 100 in limits.values()
+(True, False, True)
+\end{pycode}
+
+\subsection{Assign, copy, deepcopy}
+
+Dicts are mutable, so everything from Chapter 8 applies. \code{b = a} is a second name for one dict.
+\code{a.copy()} is shallow: new outer dict, shared inner values. \code{copy.deepcopy(a)} copies all the way
+down.
+
+\begin{pycode}
+>>> import copy
+>>> a = {"model": "haiku", "stops": ["END"]}
+>>> b = a
+>>> c = a.copy()
+>>> e = copy.deepcopy(a)
+>>> a["stops"].append("STOP")
+>>> c["stops"], e["stops"]
+(['END', 'STOP'], ['END'])
+>>> b is a, c is a, c["stops"] is a["stops"]
+(True, False, True)
+\end{pycode}
+
+\subsection{Compare dictionaries}
+
+\code{==} and \code{!=} compare keys and values and ignore order. The ordering operators
+(\code{<}, \code{>}) are not defined for dicts.
+
+\begin{pycode}
+>>> {1: 1, 2: 2, 3: 3} == {3: 3, 1: 1, 2: 2}
+True
+>>> {1: [1, 2]} == {1: [1, 1]}
+False
+>>> {1: 1} < {2: 2}
+Traceback (most recent call last):
+  ...
+TypeError: '<' not supported between instances of 'dict' and 'dict'
+\end{pycode}
+
+\subsection{Dictionary comprehensions}
+
+The form is \code{\{key\_expr: value\_expr for item in iterable if condition\}}. Use it to build or reshape
+dicts in one expression.
+
+\begin{pycode}
+>>> words = ["haiku", "opus", "sonnet"]
+>>> {w: len(w) for w in words}
+{'haiku': 5, 'opus': 4, 'sonnet': 6}
+>>> {w: len(w) for w in words if len(w) > 4}
+{'haiku': 5, 'sonnet': 6}
+>>> {v: k for k, v in {"a": 1, "b": 2}.items()}
+{1: 'a', 2: 'b'}
+\end{pycode}
+
+Swapping keys and values drops data when values repeat, and fails when a value is not hashable.
+
+\subsection{Counting and grouping patterns}
+
+Two patterns appear constantly. Counting: \code{d.get(key, 0) + 1}. Grouping: \code{d.setdefault(key, [])}
+then \code{.append}. For counting alone, \code{collections.Counter} does it in one call (Chapter 12).
+
+\begin{pycode}
+>>> counts = {}
+>>> for ch in "letters":
+...     counts[ch] = counts.get(ch, 0) + 1
+>>> counts
+{'l': 1, 'e': 2, 't': 2, 'r': 1, 's': 1}
+>>> by_label = {}
+>>> for doc, label in [("d1", "spam"), ("d2", "ok"), ("d3", "spam")]:
+...     by_label.setdefault(label, []).append(doc)
+>>> by_label
+{'spam': ['d1', 'd3'], 'ok': ['d2']}
+>>> from collections import Counter
+>>> Counter("letters").most_common(1)
+[('e', 2)]
+\end{pycode}
+
+% ------------------------------------------------------------
+\section{Sets}
+
+A set is a dict with the values thrown away: a bag of \emph{unique, hashable} items with no order and no
+positions. Use one when you only care whether something is in there, or when you need to remove duplicates
+or compare groups.
+
+\subsection{Create with set() or \{\}}
+
+\begin{pycode}
+>>> type({}), type(set())
+(<class 'dict'>, <class 'set'>)
+>>> seen = {3, 1, 3, 2}
+>>> seen
+{1, 2, 3}
+>>> sorted(set("letters"))
+['e', 'l', 'r', 's', 't']
+>>> set((1,)), set([0, 2, 4]), set()
+({1}, {0, 2, 4}, set())
+\end{pycode}
+
+\begin{trap}[: \texttt{\{\}} is an empty dict, not an empty set]
+Empty braces are a \emph{dict}. Write \code{set()} for an empty set. Also \code{set()} takes \emph{one}
+iterable, not several values, and a bare number is not iterable.
+\end{trap}
+
+\begin{pycode}
+>>> set(0, 2, 4)
+Traceback (most recent call last):
+  ...
+TypeError: set expected at most 1 argument, got 3
+>>> set(5)
+Traceback (most recent call last):
+  ...
+TypeError: 'int' object is not iterable
+\end{pycode}
+
+Because a set is unordered, you cannot index it, and the order of a printed set of strings can change
+between runs. Use \code{sorted(s)} when you need a stable order. Items must be hashable.
+
+\begin{pycode}
+>>> {1, 2}[0]
+Traceback (most recent call last):
+  ...
+TypeError: 'set' object is not subscriptable
+>>> {[1, 2]}
+Traceback (most recent call last):
+  ...
+TypeError: unhashable type: 'list'
+\end{pycode}
+
+\subsection{Add, remove, length, membership}
+
+\begin{pycode}
+>>> s = {1, 2, 3}
+>>> s.add(4)
+>>> s.add(2)
+>>> s.remove(3)
+>>> s.discard(99)
+>>> s
+{1, 2, 4}
+>>> len(s), 2 in s, 3 in s
+(3, True, False)
+>>> s.remove(99)
+Traceback (most recent call last):
+  ...
+KeyError: 99
+\end{pycode}
+
+\code{remove()} raises \code{KeyError} when the item is absent. \code{discard()} stays quiet. Adding an item
+that is already there changes nothing. Testing \code{x in s} takes about the same time however big the set
+is; on a list it scans every item.
+
+A common use is removing duplicates. A set loses the order; a dict keeps it:
+
+\begin{pycode}
+>>> docs = ["b", "a", "b", "c", "a"]
+>>> len(set(docs))
+3
+>>> list(dict.fromkeys(docs))
+['b', 'a', 'c']
+\end{pycode}
+
+\subsection{Set operations}
+
+Set algebra answers ``what do these two groups share?'' and ``what is missing?''. Each operator has a
+method twin. The methods accept any iterable; the operators need two sets.
+
+%MD<
+% ```text
+%   a = {1, 2}     b = {2, 3}
+%
+%   a | b  union          a & b  intersection      a - b  difference       a ^ b  symmetric diff.
+%   ( 1 [2] 3 )           ( 1  [2]  3 )            ( [1] 2   3 )           ( [1]  2  [3] )
+%   all items             items in both            in a, not in b          in exactly one
+%   {1, 2, 3}             {2}                      {1}                     {1, 3}
+% ```
+%MD>
+\begin{center}
+\begin{tikzpicture}[lab/.style={font=\ttfamily\small,align=center},it/.style={font=\ttfamily\scriptsize}]
+  % panel 1: union
+  \begin{scope}[shift={(0,0)}]
+    \fill[cblue,opacity=0.35] (-0.4,0) circle (0.7);  \fill[cblue,opacity=0.35] (0.4,0) circle (0.7);
+    \draw[cgray] (-0.4,0) circle (0.7);  \draw[cgray] (0.4,0) circle (0.7);
+    \node[it] at (-0.75,0) {1}; \node[it] at (0,0) {2}; \node[it] at (0.75,0) {3};
+    \node[lab] at (0,-1.3) {a | b\\ \footnotesize\sffamily union};
+  \end{scope}
+  % panel 2: intersection
+  \begin{scope}[shift={(4.0,0)}]
+    \begin{scope}\clip (-0.4,0) circle (0.7); \fill[cgreen,opacity=0.45] (0.4,0) circle (0.7);\end{scope}
+    \draw[cgray] (-0.4,0) circle (0.7);  \draw[cgray] (0.4,0) circle (0.7);
+    \node[it] at (-0.75,0) {1}; \node[it] at (0,0) {2}; \node[it] at (0.75,0) {3};
+    \node[lab] at (0,-1.3) {a \& b\\ \footnotesize\sffamily intersection};
+  \end{scope}
+  % panel 3: difference
+  \begin{scope}[shift={(8.0,0)}]
+    \fill[cgold,opacity=0.45] (-0.4,0) circle (0.7);  \fill[white] (0.4,0) circle (0.7);
+    \draw[cgray] (-0.4,0) circle (0.7);  \draw[cgray] (0.4,0) circle (0.7);
+    \node[it] at (-0.75,0) {1}; \node[it] at (0,0) {2}; \node[it] at (0.75,0) {3};
+    \node[lab] at (0,-1.3) {a - b\\ \footnotesize\sffamily difference};
+  \end{scope}
+  % panel 4: symmetric difference
+  \begin{scope}[shift={(12.0,0)}]
+    \fill[cpurple,opacity=0.4] (-0.4,0) circle (0.7);  \fill[cpurple,opacity=0.4] (0.4,0) circle (0.7);
+    \begin{scope}\clip (-0.4,0) circle (0.7); \fill[white] (0.4,0) circle (0.7);\end{scope}
+    \draw[cgray] (-0.4,0) circle (0.7);  \draw[cgray] (0.4,0) circle (0.7);
+    \node[it] at (-0.75,0) {1}; \node[it] at (0,0) {2}; \node[it] at (0.75,0) {3};
+    \node[lab] at (0,-1.3) {a \textasciicircum{} b\\ \footnotesize\sffamily in exactly one};
+  \end{scope}
+  \node[font=\sffamily\scriptsize,text=cgray] at (6.0,1.15) {with \code{a = \{1, 2\}} (left circle) and \code{b = \{2, 3\}} (right circle); the shaded part is the result};
+\end{tikzpicture}
+\end{center}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+\textbf{Operator} & \textbf{Method} & \textbf{Result is} \\
+\midrule
+\code{a | b}  & \code{a.union(b)}                & items in either \\
+\code{a \& b} & \code{a.intersection(b)}         & items in both \\
+\code{a - b}  & \code{a.difference(b)}           & items in \code{a} but not in \code{b} \\
+\code{a \textasciicircum{} b} & \code{a.symmetric\_difference(b)} & items in exactly one \\
+\code{a <= b} & \code{a.issubset(b)}             & \code{bool}: every item of \code{a} is in \code{b} \\
+\code{a < b}  & --                               & \code{bool}: proper subset (and not equal) \\
+\code{a >= b} & \code{a.issuperset(b)}           & \code{bool}: \code{a} contains all of \code{b} \\
+--            & \code{a.isdisjoint(b)}           & \code{bool}: nothing in common \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{pycode}
+>>> a, b = {1, 2}, {2, 3}
+>>> a | b, a & b, a - b, a ^ b
+({1, 2, 3}, {2}, {1}, {1, 3})
+>>> allowed = {"search", "calc", "email"}
+>>> requested = {"calc", "shell"}
+>>> sorted(requested & allowed), sorted(requested - allowed)
+(['calc'], ['shell'])
+>>> requested <= allowed, {1} <= {1, 2}, {1, 2} < {1, 2}
+(False, True, False)
+>>> a.union([5, 6]) == {1, 2, 5, 6}
+True
+>>> a | [5, 6]
+Traceback (most recent call last):
+  ...
+TypeError: unsupported operand type(s) for |: 'set' and 'list'
+\end{pycode}
+
+The result of an operator is a new set, and an empty result is falsy, so
+\code{if requested - allowed:} reads as ``is anything missing?''.
+
+\subsection{Set comprehensions and frozenset}
+
+\begin{pycode}
+>>> {n % 3 for n in range(10)}
+{0, 1, 2}
+>>> sorted({w[0] for w in ["apple", "avocado", "banana"]})
+['a', 'b']
+>>> fs = frozenset([3, 2, 1])
+>>> fs
+frozenset({1, 2, 3})
+>>> fs.add(4)
+Traceback (most recent call last):
+  ...
+AttributeError: 'frozenset' object has no attribute 'add'
+>>> {frozenset({1, 2}): "usable as a dict key"}
+{frozenset({1, 2}): 'usable as a dict key'}
+\end{pycode}
+
+A \code{frozenset} is an immutable set. Because it is hashable it can be a dict key or a member of another
+set, which an ordinary set cannot.
+
+\begin{typecheck}[: the four comprehensions and the odd one out]
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l l X@{}}
+\toprule
+\textbf{Syntax} & \textbf{Builds a} & \textbf{Duplicates} & \textbf{Note} \\
+\midrule
+\code{[x for ...]}         & \code{list}      & kept            & ordered \\
+\code{\{x for ...\}}       & \code{set}       & dropped         & unordered \\
+\code{\{k: v for ...\}}    & \code{dict}      & later key wins  & the colon makes it a dict \\
+\code{(x for ...)}         & generator        & kept            & lazy, one pass; \emph{not} a tuple \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{typecheck}
+
+\subsection{Which container?}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l c c c c@{}}
+\toprule
+ & \textbf{tuple} & \textbf{list} & \textbf{dict} & \textbf{set} \\
+\midrule
+Ordered?          & \cmark & \cmark & \cmark (by insertion) & \xmark \\
+Duplicates?       & \cmark & \cmark & keys: \xmark & \xmark \\
+Mutable?          & \xmark & \cmark & \cmark & \cmark \\
+Find by           & position & position & key & value (\code{in}) \\
+Fast \code{x in}? & \xmark & \xmark & \cmark (keys) & \cmark \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{gamerule}
+Reach for a dict when you have named fields or a lookup table, a set when you ask ``have I seen this?'',
+a list when order and repeats matter, and a tuple for a small fixed record.
+\end{gamerule}
+
+\begin{practice}
+\begin{enumerate}
+\item Build a dict \code{prices} mapping \code{"haiku"}, \code{"sonnet"}, \code{"opus"} to three prices. Print
+the price of \code{"sonnet"} two ways, one of which cannot raise \code{KeyError}.
+\item Given \code{prices}, build the inverse dict (price to name). What goes wrong if two models share a price?
+\item What is the difference between \code{d.get("k")} returning \code{None} and \code{d["k"]}?
+\item Merge \code{\{"a": 1, "b": 2\}} and \code{\{"b": 9\}} into a new dict without changing either. Which value
+does \code{"b"} get?
+\item Why does \code{\{\}} not create an empty set, and what do you write instead?
+\item Given two sets of tool names, \code{allowed} and \code{requested}, write one expression for the tools
+that were requested but not allowed.
+\end{enumerate}
+\end{practice}
+
+\begin{achievement}{Key Master}
+You can now:
+\begin{itemize}
+\item create, read, update, merge, and delete dict entries, choosing between \code{[ ]}, \code{get}, and
+\code{in};
+\item walk nested JSON-like data and handle missing keys safely;
+\item loop with \code{keys()}, \code{values()}, and \code{items()} without changing the dict during the loop;
+\item use sets for uniqueness, membership, and \code{|}, \code{\&}, \code{-}, \code{\textasciicircum{}};
+\item explain why a list cannot be a dict key and when to use \code{frozenset}.
+\end{itemize}
+\end{achievement}

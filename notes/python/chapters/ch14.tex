@@ -1,0 +1,441 @@
+\chapter{Type Hints and Documentation}
+
+\usetikzlibrary{shapes.geometric}
+\tikzset{pbox/.style={draw=cgray,fill=cgray!8,rounded corners=2pt,font=\sffamily\small,
+    inner sep=4pt,align=center},
+  pdec/.style={pbox,diamond,aspect=2.4,inner sep=0pt,draw=cgold,fill=cgold!12},
+  parr/.style={-{Stealth[length=2mm]},thick,cgray}}
+
+Python variables are just names attached to objects, so nothing in the language says what kind of object a
+name should hold. Type hints are optional notes that say it. This chapter shows how to write them, how a
+checker (mypy) uses them to find bugs before you run the code, and how comments, docstrings and README files
+explain your code to the next reader, which may be you.
+
+% ------------------------------------------------------------
+\section{Type hints}
+
+A \textbf{type hint} (also \emph{type annotation}) says what type a variable, parameter or return value is
+\emph{supposed} to have. Python itself ignores hints. They are for people and for tools.
+
+\begin{center}
+%%MD-BEGIN
+% ```mermaid
+% flowchart LR
+%     C["your code<br/>with type hints"] --> I["Python interpreter<br/>ignores hints"]
+%     C --> M["mypy / Pylance<br/>checks BEFORE you run"]
+%     C --> L["libraries at run time<br/>FastAPI, Pydantic, Anthropic SDK<br/>read hints as data"]
+% ```
+%%MD-END
+\begin{tikzpicture}[node distance=12mm]
+  \node[pbox,draw=cblue,fill=cblue!10] (c) {your code\\with type hints};
+  \node[pbox,right=of c,yshift=12mm,text width=5.2cm] (i) {\textbf{Python interpreter}\\{\footnotesize ignores them}};
+  \node[pbox,right=of c,text width=5.2cm,draw=cgreen,fill=cgreen!10] (m) {\textbf{mypy, Pylance} (editor)\\{\footnotesize check them before you run}};
+  \node[pbox,right=of c,yshift=-14mm,text width=5.2cm,draw=cpurple,fill=cpurple!10] (l) {\textbf{libraries at run time}\\{\footnotesize FastAPI, Pydantic, the SDK read them as data}};
+  \draw[parr] (c.east)--(i.west); \draw[parr] (c.east)--(m.west); \draw[parr] (c.east)--(l.west);
+\end{tikzpicture}
+\end{center}
+
+\subsection{Variable hints}
+
+The form is \code{name: type} or \code{name: type = value}.
+
+\begin{pycode}
+from typing import Any
+
+model: str = "small-model"
+temperature: float = 0.7
+max_tokens: int                       # hint only: no value, no variable yet
+stop: list[str] = ["END"]             # a list of str
+usage: dict[str, int] = {"in": 22, "out": 73}      # keys str, values int
+pair: tuple[int, str] = (1, "a")      # exactly: one int, then one str
+price: int | float = 4                # either type (Python 3.10+)
+alias: str | None = None              # a str, or missing
+anything: Any = object()              # opt out: could be anything
+
+print(__annotations__["model"], __annotations__["usage"])
+print(sorted(__annotations__))
+try:
+    print(max_tokens)
+except NameError as e:
+    print("NameError:", e)
+\end{pycode}
+\begin{rawcode}
+<class 'str'> dict[str, int]
+['alias', 'anything', 'max_tokens', 'model', 'pair', 'price', 'stop', 'temperature', 'usage']
+NameError: name 'max_tokens' is not defined
+\end{rawcode}
+
+\begin{typecheck}
+The hint is stored in \code{\_\_annotations\_\_}, a plain \code{dict} mapping names to types. It is only a
+record. \code{max\_tokens: int} \emph{does not create} the variable, so reading it raises \code{NameError}.
+\code{list[str]} means ``list whose items are \code{str}''; \code{tuple[int, str]} means a pair of exactly those types.
+\end{typecheck}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l >{\raggedright\arraybackslash}X l@{}}
+\toprule
+\textbf{Hint} & \textbf{Meaning} & \textbf{Python} \\
+\midrule
+\code{int}, \code{str}, \code{float}, \code{bool} & the plain type & any \\
+\code{list[str]}, \code{dict[str, int]}, \code{set[int]} & container and what is inside & 3.9+ \\
+\code{tuple[int, str]} / \code{tuple[int, ...]} & fixed pair / any number of ints & 3.9+ \\
+\code{int | float} & one of several types & 3.10+ \\
+\code{str | None} & a value, or \code{None} (same as \code{Optional[str]}) & 3.10+ \\
+\code{Any} (from \code{typing}) & anything; switches checking off for it & any \\
+\code{Union[int, float]}, \code{Optional[float]} & older spellings of the two lines above & any \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{trap}
+The book's older spelling is \code{Union[int, float]} with square brackets. Writing \code{Union(int, float)} with
+round brackets is an error. On Python 3.10+ prefer the shorter \code{int | float}.
+\end{trap}
+
+\subsection{Function hints}
+
+Parameters get \code{name: type}; the return type goes after \code{->}. A function that returns nothing
+is \code{-> None}.
+
+\begin{center}
+\begin{tikzpicture}
+  \tikzset{seg/.style={anchor=west,inner sep=1pt,font=\ttfamily\footnotesize}}
+  \node[seg] (s1) at (0,0) {def token\_cost(};
+  \node[seg,right=0pt of s1,draw=cblue,fill=cblue!10] (s2) {model: str};
+  \node[seg,right=0pt of s2] (s3) {,};
+  \node[seg,right=0pt of s3,draw=cblue,fill=cblue!10] (s4) {tokens\_in: int};
+  \node[seg,right=0pt of s4] (s5) {,};
+  \node[seg,right=0pt of s5,draw=cblue,fill=cblue!10] (s6) {tokens\_out: int};
+  \node[seg,right=0pt of s6,draw=cgold,fill=cgold!10] (s7) {= 0};
+  \node[seg,right=0pt of s7] (s8) {)};
+  \node[seg,right=0pt of s8,draw=cgreen,fill=cgreen!10] (s9) {-> float};
+  \node[seg,right=0pt of s9] (s10) {:};
+  \draw[parr,cblue] ([yshift=-8mm]s2.south)--(s2.south);
+  \node[font=\sffamily\scriptsize,text=cblue!70!black,below=7.5mm of s2.south] {parameter name: type};
+  \draw[parr,cgold] ([yshift=8mm]s7.north)--(s7.north);
+  \node[font=\sffamily\scriptsize,text=cgold!60!black,above=7.5mm of s7.north] {default value};
+  \draw[parr,cgreen] ([yshift=-8mm]s9.south)--(s9.south);
+  \node[font=\sffamily\scriptsize,text=cgreen!70!black,below=7.5mm of s9.south] {return type};
+\end{tikzpicture}
+\end{center}
+
+\begin{pycode}
+def token_cost(model: str, tokens_in: int, tokens_out: int = 0) -> float:
+    rates = {"small": (0.10, 0.50), "large": (4.0, 20.0)}   # USD per 1M
+    rate_in, rate_out = rates[model]
+    return (tokens_in * rate_in + tokens_out * rate_out) / 1e6
+
+def no_return(n: int) -> None:
+    print("got", n)
+
+print(token_cost.__annotations__)
+print(token_cost("small", 1000, 500))
+x = no_return(3)
+print(x)
+\end{pycode}
+\begin{rawcode}
+{'model': <class 'str'>, 'tokens_in': <class 'int'>, 'tokens_out': <class 'int'>, 'return': <class 'float'>}
+0.00035
+got 3
+None
+\end{rawcode}
+
+\subsection{Hints are not enforced}
+
+\begin{pycode}
+def double(n: int) -> int:
+    return n * 2
+
+print(double("ab"))
+\end{pycode}
+\begin{rawcode}
+abab
+\end{rawcode}
+
+Python happily multiplied a string. The hint said \code{int}, but nobody checked. Only a tool such as mypy
+would have flagged the call.
+
+\subsection{Optional values: \texttt{str | None}}
+
+When a function may have nothing to return, say so. The checker then forces you to handle \code{None}
+before you use the value.
+
+\begin{pycode}
+def find_alias(name: str) -> str | None:
+    aliases = {"fast": "small"}
+    return aliases.get(name)          # .get returns None when missing
+
+r = find_alias("slow")
+print(r, type(r))
+try:
+    print(r.upper())                  # a checker flags this line
+except AttributeError as e:
+    print("AttributeError:", e)
+
+r2 = find_alias("fast")
+if r2 is not None:                    # narrowing: inside, r2 is a plain str
+    print(r2.upper())
+\end{pycode}
+\begin{rawcode}
+None <class 'NoneType'>
+AttributeError: 'NoneType' object has no attribute 'upper'
+SMALL
+\end{rawcode}
+
+\begin{center}
+%%MD-BEGIN
+% ```mermaid
+% flowchart TD
+%     A["alias = find_alias(name)<br/>type: str | None"] --> B{"alias is None?"}
+%     B -- yes --> C["handle the missing case<br/>(default, raise, return)"]
+%     B -- no --> D["alias is str here<br/>alias.upper() is safe"]
+% ```
+%%MD-END
+\begin{tikzpicture}[node distance=7mm and 10mm]
+  \node[pbox,draw=cblue,fill=cblue!10] (a) {\ttfamily alias = find\_alias(name)\\{\sffamily\footnotesize type: \texttt{str | None}}};
+  \node[pdec,right=of a] (b) {\ttfamily\footnotesize alias is None?};
+  \node[pbox,above right=3mm and 10mm of b,draw=cgold,fill=cgold!10] (c) {handle missing:\\default, raise, or return};
+  \node[pbox,below right=3mm and 10mm of b,draw=cgreen,fill=cgreen!10] (d) {\ttfamily alias\sffamily{} is a \ttfamily str\\{\sffamily\footnotesize \texttt{alias.upper()} is safe}};
+  \draw[parr] (a)--(b);
+  \draw[parr] (b)--node[above,sloped,font=\scriptsize\sffamily]{yes}(c.west);
+  \draw[parr] (b)--node[below,sloped,font=\scriptsize\sffamily]{no}(d.west);
+\end{tikzpicture}
+\end{center}
+
+\begin{typecheck}
+\code{str | None} is a \emph{union}: a value of this type is either a \code{str} or \code{None}. You may use string methods
+only after you prove it is not \code{None}. Every \code{dict.get(...)}, \code{os.environ.get(...)} and
+\code{re.match(...)} returns this kind of value.
+\end{typecheck}
+
+\subsection{Messages, \texttt{Literal} and \texttt{TypedDict}}
+
+LLM code passes around lists of small dicts. Two helpers from \code{typing} describe them precisely.
+\code{Literal} lists the allowed exact values; \code{TypedDict} describes a dict with fixed keys.
+
+\begin{pycode}
+from typing import Literal, TypedDict
+
+class Message(TypedDict):
+    role: Literal["user", "assistant"]
+    content: str
+
+def last_user(history: list[Message]) -> str | None:
+    for m in reversed(history):
+        if m["role"] == "user":
+            return m["content"]
+    return None
+
+msgs: list[Message] = [{"role": "user", "content": "hi"},
+                       {"role": "assistant", "content": "hello"}]
+print(last_user(msgs), type(msgs[0]))
+\end{pycode}
+\begin{rawcode}
+hi <class 'dict'>
+\end{rawcode}
+
+At run time a \code{TypedDict} is just a \code{dict}; only the checker knows the rules. A checker would reject
+\code{\{"role": "robot", "content": "x"\}}. The SDK uses the same trick: you can read the allowed
+\code{stop\_reason} values off its types.
+
+\begin{pycode}
+from anthropic.types import Message
+print(Message.model_fields["stop_reason"].annotation)
+\end{pycode}
+\begin{rawcode}
+typing.Optional[typing.Literal['end_turn', 'max_tokens', 'stop_sequence', 'tool_use', 'pause_turn', 'refusal', ...]]
+\end{rawcode}
+
+(Needs the \code{anthropic} package; the list shown is shortened and depends on your installed version.)
+
+\begin{gamerule}
+Hint every function signature (parameters and return). Hint a variable only when the type is not obvious from
+the value. Use \code{X | None} for ``maybe missing'' and handle it. Use \code{Any} rarely: it turns checking off.
+\end{gamerule}
+
+% ------------------------------------------------------------
+\section{Mypy}
+
+\textbf{mypy} reads your code without running it and reports places where a hint is violated. Install and run it
+inside your \code{.venv}:
+
+\begin{rawcode}
+> python -m pip install mypy
+> python -m mypy errs.py
+\end{rawcode}
+
+Here is a file with three type mistakes and one value mistake:
+
+\begin{pycode}
+# errs.py
+def int_to_str(num: int) -> str:
+    return str(num)
+
+def str_to_int(txt: str) -> int:
+    return int(txt)
+
+a = int_to_str(19)        # fine
+b = int_to_str(47.5)      # float, expected int
+c = int_to_str("")        # str, expected int
+d = str_to_int("56")      # fine
+e = str_to_int("")        # type ok, value bad
+f = str_to_int(98)        # int, expected str
+\end{pycode}
+
+Typical mypy report (\emph{not run here: mypy is not installed in this environment; the file does compile}):
+
+\begin{rawcode}
+errs.py:10: error: Argument 1 to "int_to_str" has incompatible type "float"; expected "int"  [arg-type]
+errs.py:11: error: Argument 1 to "int_to_str" has incompatible type "str"; expected "int"  [arg-type]
+errs.py:14: error: Argument 1 to "str_to_int" has incompatible type "int"; expected "str"  [arg-type]
+Found 3 errors in 1 file (checked 1 source file)
+\end{rawcode}
+
+Running the same file with plain Python gets only as far as the first \emph{runtime} failure, and it is the one line
+mypy does \emph{not} report (this is real output, last lines):
+
+\begin{rawcode}
+    return int(txt)
+           ^^^^^^^^
+ValueError: invalid literal for int() with base 10: ''
+\end{rawcode}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
+\toprule
+ & \textbf{mypy (static)} & \textbf{Python (run time)} \\
+\midrule
+When & before the program runs, on the whole file & only when that line executes \\
+Catches & wrong argument or return \emph{types}, missing \code{None} checks & whatever actually fails on this run \\
+Misses & wrong \emph{values}: \code{int("")}, empty list, bad JSON & type mistakes on lines that never run \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{trap}
+Types do not describe values. \code{txt: str} accepts \code{""}, so mypy is silent about \code{int("")}. A checker
+removes a class of bugs; you still need tests (Chapter~15) for values and logic.
+\end{trap}
+
+\begin{gamerule}
+Run the checker as part of your routine, next to tests. In VS Code, the Pylance extension shows
+the same kind of errors as you type, with no command. Start with the default settings; add \code{--strict} later.
+\end{gamerule}
+
+% ------------------------------------------------------------
+\section{Documentation}
+
+Code says \emph{what happens}. Documentation says \emph{why}, and \emph{how to use it}. Hints cover part of that;
+text covers the rest.
+
+\subsection{Comments}
+
+A comment starts with \code{\#} and is for the reader. Explain \emph{why}, not what the code already says.
+
+\begin{pycode}
+retries = 3                    # bad: says what the code says
+retries = 3                    # 429 errors come in bursts; 3 tries was enough
+\end{pycode}
+
+\subsection{Docstrings}
+
+A \textbf{docstring} is a string literal as the first statement of a function, class or module. Python stores it in
+\code{\_\_doc\_\_} and \code{help()} prints it. IDEs show it as a tooltip when you hover.
+
+\begin{pycode}
+def echo(text):
+    "Return the input unchanged."
+    return text
+
+print(echo.__doc__)
+help(echo)
+\end{pycode}
+\begin{rawcode}
+Return the input unchanged.
+Help on function echo in module __main__:
+
+echo(text)
+    Return the input unchanged.
+\end{rawcode}
+
+For anything longer, use a multi-line docstring: a one-line summary, then details. The common ``Google style'' lists
+arguments, return value and errors.
+
+\begin{pycode}
+def token_cost(model: str, tokens_in: int, tokens_out: int = 0) -> float:
+    """Return the cost in USD of one API call.
+
+    Args:
+        model: model name, "small" or "large".
+        tokens_in: number of input tokens.
+        tokens_out: number of output tokens (default 0).
+
+    Returns:
+        Cost in US dollars as a float.
+
+    Raises:
+        KeyError: if the model name is unknown.
+    """
+    rates = {"small": (0.10, 0.50), "large": (4.0, 20.0)}
+    rate_in, rate_out = rates[model]
+    return (tokens_in * rate_in + tokens_out * rate_out) / 1e6
+
+print(token_cost.__doc__.splitlines()[0])
+\end{pycode}
+\begin{rawcode}
+Return the cost in USD of one API call.
+\end{rawcode}
+
+Because the types are already in the signature, the docstring does not need to repeat them; describe meaning,
+units (USD, tokens) and errors.
+
+\subsection{Markup files}
+
+Project-level documentation lives in text files beside the code. \textbf{Markdown} (\code{README.md}) is the standard
+on GitHub; AsciiDoc and reStructuredText are alternatives. A README says what the project is, how to install it
+(the \code{requirements.txt} and venv steps from Chapter~13), and how to run it.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Tool} & \textbf{Answers the question} & \textbf{Read by} \\
+\midrule
+type hint & what type goes in and out? & checker, IDE, library \\
+comment \code{\#} & why is this line odd? & someone reading the source \\
+docstring & what does this function do, and how do I call it? & \code{help()}, IDE tooltips \\
+\code{README.md} & what is this project and how do I run it? & new users and teammates \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{boss}[: hints are a promise, not a guard]
+Python never checks hints. They are a contract that a \emph{tool} verifies before running, and that
+\emph{libraries} may read while running. Hold two things apart: (1) the interpreter runs even when the hints are wrong;
+(2) a clean mypy report says the \emph{types} line up, not that the \emph{values} are valid. If data comes from
+outside your program (JSON from an API, user input), the hint on that variable is your \emph{belief}. Validate the
+data, or use a library such as Pydantic that checks it at run time using the hints.
+\end{boss}
+
+\begin{practice}
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+\item Write \code{most\_used(counts)} that takes a \code{dict[str, int]} of tokens per model and returns the model with the largest count, or \code{None} if the dict is empty. Add complete hints and a docstring.
+\item Why does a type checker complain about \code{find\_alias("x").upper()} when \code{find\_alias} returns \code{str | None}? Show two ways to fix it.
+\item Python runs \code{double("ab")} without error though \code{n: int} is hinted. Who \emph{would} complain, and when?
+\item What is the difference between a comment, a docstring and a README? Give one thing each should say about a \code{summarize(text)} function.
+\item Hint a variable holding a list of chat messages, where each message is a dict with a \code{role} and a \code{content} string.
+\item Name one kind of mistake mypy cannot find and the tool from Chapter~15 that can.
+\end{enumerate}
+\end{practice}
+
+\begin{achievement}{Signature Writer}
+\begin{itemize}[leftmargin=*,itemsep=1pt]
+\item Annotate variables and function signatures, including \code{None}, unions and containers.
+\item Explain that hints are ignored at run time and checked by mypy or your editor.
+\item Read a mypy error and say which line and which type are wrong.
+\item Write a useful docstring and know where \code{help()} and your editor find it.
+\end{itemize}
+\end{achievement}
+
+%%MD-BEGIN
+% **Related:** [[10 - Functions]] (signatures, docstrings), [[09 - Dictionaries and Sets]] (`dict.get` returns `None`), [[13 - Development Environment]] (install mypy), [[15 - Testing]] (tests check values, doctest), [[16 - Debugging]] (read the traceback), [[26 - AI]].
+%%MD-END

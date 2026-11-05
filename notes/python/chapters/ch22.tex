@@ -1,0 +1,1268 @@
+% ============================================================
+%  Introducing Python, chapter 22: Data in Space: Networks
+% ============================================================
+\chapter{Data in Space: Networks}
+
+\tikzset{nb/.style={draw=cblue,fill=cblue!10,rounded corners=2pt,font=\small\sffamily,
+  inner sep=4pt,align=center,minimum height=6.5mm}}
+
+Chapter 21 was about doing many things at once. This chapter is about doing things in
+many places: programs on different machines that exchange bytes. You get the layers
+under every web and LLM API call (TCP/IP, sockets), the common message patterns, and the
+tools that sit on top (serialization, RPC, cloud basics).
+
+% ------------------------------------------------------------
+\section{TCP/IP}
+
+Networks work because everyone follows layered rules called \emph{protocols}. A layer
+only needs to know the layer directly below it.
+
+%MD
+%```mermaid
+%flowchart TB
+%    A["Application<br/>HTTP, SMTP, DNS: your API call lives here"]
+%    T["Transport<br/>TCP or UDP: ports, bytes in order (TCP)"]
+%    I["Internet<br/>IP: addresses, packets hop between routers"]
+%    L["Link<br/>Ethernet, Wi-Fi: electrical and radio signals"]
+%    A -->|uses| T -->|uses| I -->|uses| L
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[lay/.style={draw,rounded corners=2pt,minimum width=4.2cm,
+    minimum height=8mm,font=\small\sffamily\bfseries,align=center}]
+  \node[lay,draw=cgreen,fill=cgreen!12]  (a) at (0,3)  {Application};
+  \node[lay,draw=cblue,fill=cblue!12]    (t) at (0,2)  {Transport};
+  \node[lay,draw=cpurple,fill=cpurple!12](i) at (0,1)  {Internet};
+  \node[lay,draw=cgray,fill=cgray!12]    (l) at (0,0)  {Link};
+  \foreach \n/\txt in {a/{HTTP, SMTP, DNS: your API call lives here},
+                       t/{TCP or UDP: ports, bytes in order (TCP)},
+                       i/{IP: addresses, packets hop between routers},
+                       l/{Ethernet, Wi-Fi: electrical and radio signals}}
+    \node[anchor=west,font=\footnotesize\sffamily] at ($(\n.east)+(4mm,0)$) {\txt};
+  \draw[->,thick,cgray] (-3.2,3.4) -- (-3.2,-0.4);
+  \node[rotate=90,font=\scriptsize\sffamily,text=cgray] at (-3.5,1.5) {each layer uses the one below};
+\end{tikzpicture}
+\end{center}
+
+Two protocols matter at the transport layer.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X X@{}}
+\toprule
+ & \textbf{UDP} & \textbf{TCP} \\
+\midrule
+Unit of data      & datagram (one small packet)       & stream of bytes \\
+Setup             & none, just send                   & handshake first (connect) \\
+Delivery          & may be lost, duplicated, reordered & retried, in order, no duplicates \\
+Speed             & fast, light                       & slower \\
+Typical use       & voice, games, DNS lookups         & web, databases, most APIs \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+HTTP/3 runs on QUIC, which itself sits on UDP, so the choice is not always black and white.
+
+Your own machine is always \code{127.0.0.1}, also called \code{localhost} or the
+\emph{loopback} interface. Two programs on one machine can talk over it without any
+real network. Every example below uses it.
+
+% ------------------------------------------------------------
+\section{Sockets}
+
+A \emph{socket} is the lowest-level network tool: an endpoint you send bytes into and
+read bytes from. It comes from C and Unix. Its address is a tuple
+\code{(host, port)}: the host is like a building, the port like a door number.
+
+\subsection{UDP: send one datagram}
+
+This example runs server and client in one script. The server runs in a thread (Chapter
+21). Port \code{0} asks the OS to pick any free port, so the example never clashes with
+another program.
+
+\begin{pycode}
+import socket
+import threading
+
+ready = threading.Event()
+addr = {}
+
+def server():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)   # DGRAM = UDP
+    s.bind(("127.0.0.1", 0))          # port 0: OS picks a free port
+    addr["value"] = s.getsockname()
+    ready.set()
+    data, client = s.recvfrom(4096)   # waits for one datagram
+    print("server got:", data)
+    s.sendto(data.upper(), client)    # reply to whoever sent it
+    s.close()
+
+t = threading.Thread(target=server)
+t.start()
+ready.wait()
+
+c = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+c.sendto("ping from eval worker".encode("utf-8"), addr["value"])
+reply, who = c.recvfrom(4096)
+print("client got:", reply)
+print(type(reply), who == addr["value"])
+c.close()
+t.join()
+\end{pycode}
+\begin{rawcode}
+server got: b'ping from eval worker'
+client got: b'PING FROM EVAL WORKER'
+<class 'bytes'> True
+\end{rawcode}
+
+\begin{typecheck}
+Sockets move \code{bytes}, never \code{str}. \code{sendto("text", addr)} raises
+\code{TypeError}. Encode on the way out (\code{.encode("utf-8")}) and decode on the way
+in (\code{.decode("utf-8")}). \code{AF\_INET} means an IP socket; \code{SOCK\_DGRAM} means
+UDP.
+\end{typecheck}
+
+The client never calls \code{bind}. The OS gives it a random port, and the server learns
+that port from \code{recvfrom}, which returns \code{(bytes, (host, port))}.
+
+\subsection{TCP: a connection}
+
+TCP adds a handshake, so the roles are more visible: the server \emph{listens} and
+\emph{accepts}; the client \emph{connects}.
+
+%MD
+%```mermaid
+%flowchart TB
+%    subgraph Server
+%        S1["socket()"] --> S2["bind(addr)"] --> S3["listen()"] --> S4["accept() waits"] --> S5["recv() / sendall()"] --> S6["close()"]
+%    end
+%    subgraph Client
+%        C1["socket()"] --> C2["connect(addr)"] --> C3["sendall() / recv()"] --> C4["close()"]
+%    end
+%    C2 <-->|handshake| S4
+%    C3 <-->|bytes| S5
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[st/.style={nb,minimum width=3.4cm},>=Stealth]
+  \node[font=\sffamily\bfseries,text=cgreen] at (0,0.7) {Server};
+  \node[font=\sffamily\bfseries,text=cblue]  at (7,0.7) {Client};
+  \node[st] (s1) at (0,0)  {\code{socket()}};
+  \node[st] (s2) at (0,-1) {\code{bind(addr)}};
+  \node[st] (s3) at (0,-2) {\code{listen()}};
+  \node[st,fill=cgold!15,draw=cgold] (s4) at (0,-3) {\code{accept()} waits};
+  \node[st] (s5) at (0,-4) {\code{recv()} / \code{sendall()}};
+  \node[st] (s6) at (0,-5) {\code{close()}};
+  \node[st] (c1) at (7,-2) {\code{socket()}};
+  \node[st,fill=cgold!15,draw=cgold] (c2) at (7,-3) {\code{connect(addr)}};
+  \node[st] (c3) at (7,-4) {\code{sendall()} / \code{recv()}};
+  \node[st] (c4) at (7,-5) {\code{close()}};
+  \foreach \a/\b in {s1/s2,s2/s3,s3/s4,s4/s5,s5/s6,c1/c2,c2/c3,c3/c4}
+    \draw[->,cgray] (\a) -- (\b);
+  \draw[<->,thick,cgold] (c2.west) -- node[above,font=\scriptsize\sffamily]{handshake} (s4.east);
+  \draw[<->,thick,cteal] (c3.west) -- node[above,font=\scriptsize\sffamily]{bytes} (s5.east);
+\end{tikzpicture}
+\end{center}
+
+TCP code looks easy until you meet one problem: where does one message end?
+
+\subsection{TCP is a stream, not messages}
+
+\begin{boss}[: no message boundaries]
+TCP delivers a \emph{stream of bytes}. If you call \code{sendall} three times, the other
+side may get all three pieces in one \code{recv}, or one piece split into two. The
+number of \code{send} calls and the number of \code{recv} calls are unrelated.
+\end{boss}
+
+%MD
+%```text
+%byte stream:  H E L L O N E T W O R L D
+%sends      :  [ send 1 ][ s2 ][ send 3 ]      (5 + 3 + 5 bytes)
+%recvs      :  [ recv 1: 8 B  ][r2:3][r3]      (8 + 3 + 2 bytes)
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[cell/.style={draw=cgray,fill=white,minimum width=5.6mm,minimum height=6mm,
+    inner sep=0,font=\ttfamily\footnotesize},>=Stealth]
+  \foreach \i/\c in {1/H,2/E,3/L,4/L,5/O,6/N,7/E,8/T,9/W,10/O,11/R,12/L,13/D}
+    \node[cell] at (\i*0.56,0) {\c};
+  \foreach \a/\b/\t in {1/5/send 1,6/8/send 2,9/13/send 3}
+    \draw[decorate,decoration={brace,amplitude=3pt},cblue,thick]
+      ({\a*0.56-0.28},0.35) -- node[above=2pt,font=\scriptsize\sffamily,text=cblue]{\t}
+      ({\b*0.56+0.28},0.35);
+  \foreach \a/\b/\t in {1/8/recv 1: 8 bytes,9/11/recv 2: 3,12/13/recv 3: 2}
+    \draw[decorate,decoration={brace,amplitude=3pt,mirror},cred,thick]
+      ({\a*0.56-0.28},-0.35) -- node[below=2pt,font=\scriptsize\sffamily,text=cred]{\t}
+      ({\b*0.56+0.28},-0.35);
+\end{tikzpicture}
+\end{center}
+
+To exchange whole messages you must add structure yourself: a fixed size, a delimiter
+character, or a length prefix. The length prefix is the most robust. Write a 4-byte
+number first, then the body.
+
+%MD
+%```text
+%+-------------+-----------------+
+%| 00 00 00 05 | H E L L O       |
+%+-------------+-----------------+
+%  4-byte length   body: exactly 5 bytes
+%  (big-endian)
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}
+  \node[draw=cgold,fill=cgold!15,minimum width=2.6cm,minimum height=7mm,font=\ttfamily\small]
+    (h) at (0,0) {00 00 00 05};
+  \node[draw=cgreen,fill=cgreen!12,minimum width=3.6cm,minimum height=7mm,font=\ttfamily\small,
+    right=0pt of h] (b) {HELLO};
+  \node[font=\scriptsize\sffamily,text=cgold,below=1mm of h] {4-byte length (big-endian)};
+  \node[font=\scriptsize\sffamily,text=cgreen,below=1mm of b] {body: exactly 5 bytes};
+\end{tikzpicture}
+\end{center}
+
+\begin{pycode}
+import socket
+import struct
+import threading
+
+ready = threading.Event()
+box = {}
+
+def recv_exact(sock, n):
+    """Read exactly n bytes, however many recv() calls it takes."""
+    chunks = []
+    while n > 0:
+        chunk = sock.recv(n)
+        if not chunk:                      # b"" means the peer closed
+            raise ConnectionError("peer closed early")
+        chunks.append(chunk)
+        n -= len(chunk)
+    return b"".join(chunks)
+
+def send_msg(sock, text):
+    body = text.encode("utf-8")
+    sock.sendall(struct.pack(">I", len(body)) + body)  # header + body
+
+def recv_msg(sock):
+    (size,) = struct.unpack(">I", recv_exact(sock, 4))
+    return recv_exact(sock, size).decode("utf-8")
+
+def server():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as srv:
+        srv.bind(("127.0.0.1", 0))
+        srv.listen()
+        box["addr"] = srv.getsockname()
+        ready.set()
+        conn, peer = srv.accept()          # blocks until a client connects
+        with conn:
+            while True:
+                try:
+                    msg = recv_msg(conn)
+                except ConnectionError:
+                    break
+                send_msg(conn, "echo: " + msg)
+
+t = threading.Thread(target=server)
+t.start()
+ready.wait()
+
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as cli:
+    cli.connect(box["addr"])
+    for prompt in ["hello", "second request", "x" * 5000]:
+        send_msg(cli, prompt)
+        reply = recv_msg(cli)
+        print(len(prompt), "->", reply[:22], len(reply))
+t.join()
+print(struct.pack(">I", 5))
+\end{pycode}
+\begin{rawcode}
+5 -> echo: hello 11
+14 -> echo: second request 20
+5000 -> echo: xxxxxxxxxxxxxxxx 5006
+b'\x00\x00\x00\x05'
+\end{rawcode}
+
+The 5000-byte message needs several \code{recv} calls underneath. Because
+\code{recv\_exact} loops, the caller never notices.
+
+\begin{trap}[: \code{recv(n)} may return fewer than \(n\) bytes]
+\code{recv(1000)} means \emph{at most} 1000. Assuming you got a whole message is the
+classic socket bug: it works on localhost with tiny messages and fails in production.
+An empty result \code{b""} is not ``no data yet''; it means the other side closed.
+\end{trap}
+
+\begin{typecheck}
+Length is counted in \emph{bytes}, not characters. \code{len("caf\textbackslash u00e9")} is
+4 but \code{len("caf\textbackslash u00e9".encode("utf-8"))} is 5. Compute the header from the
+encoded bytes, as \code{send\_msg} does. \code{struct.pack(">I", 5)} gives the \code{bytes}
+value \code{b'\textbackslash x00\textbackslash x00\textbackslash x00\textbackslash x05'}.
+\end{typecheck}
+
+\begin{trap}[: ``Address already in use'']
+A fixed port such as 6789 stays busy while an old server (or a recently closed
+connection) holds it. Use port 0 for tests, or kill the old process.
+\end{trap}
+
+\begin{gamerule}[: bind to localhost while learning]
+Use \code{"127.0.0.1"} in \code{bind}. Binding to \code{"0.0.0.0"} or \code{"*"} exposes
+the port to every network the machine is on. Do that only on purpose.
+\end{gamerule}
+
+\subsection{Scapy and Netcat}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+\textbf{Tool} & \textbf{What it is for} \\
+\midrule
+Scapy (\code{pip install scapy}) & build, send and inspect raw packets from Python. Like a
+programmable Wireshark. Do not confuse it with Scrapy (web scraping). \\
+Netcat (\code{nc}) & command-line tool to open a connection to a host and port and type
+bytes by hand. Handy to check that a port answers. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+% ------------------------------------------------------------
+\section{Networking Patterns}
+
+Real systems are built from a few repeated shapes.
+
+%MD
+%```mermaid
+%flowchart LR
+%    subgraph RR["Request-reply"]
+%        c1["client"] -->|request| s1["server"]
+%        s1 -->|reply| c1
+%    end
+%    subgraph PUSH["Push (fan-out)"]
+%        p["producer"] -->|job A| w1["worker 1"]
+%        p -->|job B| w2["worker 2"]
+%    end
+%    subgraph PULL["Pull (fan-in)"]
+%        a["proc 1"] --> l["logger"]
+%        b["proc 2"] --> l
+%    end
+%    subgraph PS["Publish-subscribe"]
+%        pub["publisher"] -->|copy| u1["sub (topic X)"]
+%        pub -->|copy| u2["sub (topic X)"]
+%    end
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[n/.style={nb,minimum width=1.5cm,font=\scriptsize\sffamily},>=Stealth]
+  % request-reply
+  \node[font=\footnotesize\sffamily\bfseries] at (1.6,1.6) {Request-reply};
+  \node[n] (c) at (0,0.5) {client};
+  \node[n,draw=cgreen,fill=cgreen!10] (s) at (3.2,0.5) {server};
+  \draw[->,cblue] ([yshift=2pt]c.east) -- ([yshift=2pt]s.west);
+  \draw[<-,cgreen] ([yshift=-2pt]c.east) -- ([yshift=-2pt]s.west);
+  % push-pull
+  \node[font=\footnotesize\sffamily\bfseries] at (8.4,1.6) {Push (fan-out)};
+  \node[n] (p) at (6.6,0.5) {producer};
+  \node[n,draw=cgreen,fill=cgreen!10] (w1) at (9.8,1.0) {worker 1};
+  \node[n,draw=cgreen,fill=cgreen!10] (w2) at (9.8,0.0) {worker 2};
+  \draw[->] (p) -- node[above,font=\tiny]{job A} (w1);
+  \draw[->] (p) -- node[below,font=\tiny]{job B} (w2);
+  % pull
+  \node[font=\footnotesize\sffamily\bfseries] at (1.6,-1.2) {Pull (fan-in)};
+  \node[n] (a) at (0,-2.2) {proc 1};
+  \node[n] (b) at (0,-3.0) {proc 2};
+  \node[n,draw=cgreen,fill=cgreen!10] (l) at (3.2,-2.6) {logger};
+  \draw[->] (a) -- (l);
+  \draw[->] (b) -- (l);
+  % pub-sub
+  \node[font=\footnotesize\sffamily\bfseries] at (8.4,-1.2) {Publish-subscribe};
+  \node[n,draw=cgold,fill=cgold!15] (pub) at (6.6,-2.6) {publisher};
+  \node[n,draw=cgreen,fill=cgreen!10] (u1) at (9.8,-2.0) {sub (topic X)};
+  \node[n,draw=cgreen,fill=cgreen!10] (u2) at (9.8,-3.0) {sub (topic X)};
+  \draw[->] (pub) -- node[above,font=\tiny]{copy} (u1);
+  \draw[->] (pub) -- node[below,font=\tiny]{copy} (u2);
+\end{tikzpicture}
+\end{center}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X X@{}}
+\toprule
+\textbf{Pattern} & \textbf{Who gets a message} & \textbf{Example} \\
+\midrule
+Request-reply & the one server asked; client waits & browser to web server, call to an LLM API \\
+Push (fan-out) & exactly one worker from a pool & job queue, load balancer \\
+Pull (fan-in) & one collector reads many sources & log collector \\
+Pub-sub & \emph{every} subscriber of the topic; none means dropped & event notifications \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Push and pub-sub look similar but differ in one question: does the message go to one
+receiver or to all of them? Both shapes in plain Python, with no network:
+
+\begin{pycode}
+import queue
+import threading
+
+# push / pull: one queue, several workers; each job goes to ONE worker
+jobs = queue.Queue()
+done = queue.Queue()
+
+def worker(name):
+    while True:
+        job = jobs.get()
+        if job is None:
+            break
+        done.put((name, job, job * job))
+
+pool = [threading.Thread(target=worker, args=(f"w{i}",)) for i in range(2)]
+for t in pool:
+    t.start()
+for n in range(4):
+    jobs.put(n)
+for _ in pool:
+    jobs.put(None)               # one stop signal per worker
+for t in pool:
+    t.join()
+results = sorted(done.get()[1:] for _ in range(4))
+print(results)
+
+# pub-sub: every subscriber of a topic gets its OWN copy
+class Broker:
+    def __init__(self):
+        self.subs = {}           # topic -> list of callbacks
+
+    def subscribe(self, topic, callback):
+        self.subs.setdefault(topic, []).append(callback)
+
+    def send(self, topic, message):
+        for callback in self.subs.get(topic, []):   # no subscriber: dropped
+            callback(message)
+
+bus = Broker()
+bus.subscribe("eval.done", lambda m: print("logger  :", m))
+bus.subscribe("eval.done", lambda m: print("alerter :", m))
+bus.subscribe("eval.failed", lambda m: print("pager   :", m))
+bus.send("eval.done", {"run": 7, "score": 0.91})
+bus.send("eval.cost", {"usd": 1.2})        # nobody listens: vanishes
+\end{pycode}
+\begin{rawcode}
+[(0, 0), (1, 1), (2, 4), (3, 9)]
+logger  : {'run': 7, 'score': 0.91}
+alerter : {'run': 7, 'score': 0.91}
+\end{rawcode}
+
+% ------------------------------------------------------------
+\section{The Request-Reply Pattern}
+
+Request-reply is the everyday pattern: you ask DNS, a web server or an LLM API, and you
+get an answer or an error.
+
+\subsection{ZeroMQ}
+
+ZeroMQ (package \code{pyzmq}) is a library, not a server. It wraps sockets and gives you
+what plain sockets do not: whole messages (no framing code), automatic reconnects, and
+queued messages when the peer is late. The ``zero'' means no broker is needed. You can
+start client and server in either order.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+\textbf{Socket type} & \textbf{Pattern} & \textbf{Note} \\
+\midrule
+\code{REQ} / \code{REP} & synchronous request / reply & strict send, receive, send, receive \\
+\code{DEALER} / \code{ROUTER} & asynchronous request / reply & build brokers between many clients and servers \\
+\code{PUSH} / \code{PULL} & fan-out / fan-in & ``ventilator'': farm out tasks, gather results \\
+\code{PUB} / \code{SUB} & publish / subscribe & subscribers filter by topic prefix \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Needs \code{pip install pyzmq}. I could not run these here (no package installed); the
+files were syntax-checked only.
+
+\begin{pycode}
+# server.py   (needs: pip install pyzmq)
+import zmq
+
+ctx = zmq.Context()
+server = ctx.socket(zmq.REP)
+server.bind("tcp://127.0.0.1:5555")
+while True:
+    request = server.recv()                    # bytes, one whole message
+    text = request.decode("utf-8")
+    server.send(("tokens: %d" % len(text.split())).encode("utf-8"))
+\end{pycode}
+\begin{pycode}
+# client.py
+import zmq
+
+ctx = zmq.Context()
+client = ctx.socket(zmq.REQ)
+client.connect("tcp://127.0.0.1:5555")         # connect, not bind
+client.send("count my words please".encode("utf-8"))
+print(client.recv().decode("utf-8"))           # tokens: 4
+\end{pycode}
+
+The server \emph{binds} (it is the stable side); the client \emph{connects}. Many REQ
+clients can connect to one REP server; it handles them one at a time and ZeroMQ queues
+the rest. Strings must be encoded: ZeroMQ messages are bytes. For structured data, send
+JSON bytes.
+
+ZeroMQ scales by changing only the address scheme:
+
+\begin{center}
+\begin{tabular}{@{}l l@{}}
+\toprule
+\textbf{Transport} & \textbf{Connects} \\
+\midrule
+\code{tcp://host:port} & processes, same or different machines \\
+\code{ipc://name} & processes on one machine \\
+\code{inproc://name} & threads inside one process (no locks needed) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Other messaging tools}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+\textbf{Tool} & \textbf{Notes} \\
+\midrule
+RabbitMQ (Python client: Pika) & popular message broker with queues and routing \\
+ActiveMQ (STOMP protocol) & Apache broker, several Python clients \\
+NATS & fast, light messaging; request-reply, pub-sub, queues \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+% ------------------------------------------------------------
+\section{The Publish-Subscribe Pattern}
+
+Pub-sub is a broadcast, not a queue. Publishers announce messages on a \emph{topic}; each
+subscriber says which topics it wants. A message can be processed once, many times or
+never. A publisher does not know who listens.
+
+%MD
+%```mermaid
+%flowchart LR
+%    P["publisher"] --> T["topics: eval.done, eval.cost"]
+%    T --> A["logger: eval.done"]
+%    T --> B["alerter: eval.done"]
+%    T -.-> C["nobody: eval.cost"]
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[n/.style={nb,minimum width=2.2cm,font=\scriptsize\sffamily},>=Stealth]
+  \node[n,draw=cgold,fill=cgold!15] (p) at (0,0) {publisher};
+  \node[n,draw=cpurple,fill=cpurple!10,minimum width=2.6cm] (t) at (3.6,0)
+    {topics: \code{eval.done}, \code{eval.cost}};
+  \node[n,draw=cgreen,fill=cgreen!10] (a) at (8,0.9) {logger: \code{eval.done}};
+  \node[n,draw=cgreen,fill=cgreen!10] (b) at (8,0) {alerter: \code{eval.done}};
+  \node[n,draw=cgray,fill=cgray!10] (c) at (8,-0.9) {nobody: \code{eval.cost}};
+  \draw[->] (p) -- (t);
+  \draw[->] (t) -- (a);
+  \draw[->] (t) -- (b);
+  \draw[->,dashed,cgray] (t) -- (c);
+\end{tikzpicture}
+\end{center}
+
+\subsection{Redis}
+
+Redis (Chapter 23 covers it as a data store) also has pub-sub. Start the subscriber
+\emph{first}: messages sent while nobody is subscribed are lost. Needs
+\code{pip install redis} and a running Redis or Valkey server; syntax-checked only.
+
+\begin{pycode}
+# needs: pip install redis, and a Redis (or Valkey) server on localhost
+import redis
+
+r = redis.Redis(decode_responses=True)         # return str, not bytes
+
+sub = r.pubsub()
+sub.subscribe("eval.done")
+for msg in sub.listen():
+    if msg["type"] == "message":
+        print(msg["channel"], msg["data"])
+        break
+
+# in another process:  r.publish("eval.done", "run 7")
+
+# push / pull with a blocking pop: waits up to 2 s for a job
+r.lpush("jobs", "prompt-1", "prompt-2")
+item = r.brpop("jobs", timeout=2)              # (list_name, value) or None
+print(item)
+\end{pycode}
+
+\begin{typecheck}
+Without \code{decode\_responses=True}, redis-py returns \code{bytes} (\code{b'run 7'}),
+so comparisons with \code{str} silently fail. \code{brpop} returns a tuple
+\code{(key, value)}, or \code{None} on timeout.
+\end{typecheck}
+
+\subsection{ZeroMQ}
+
+ZeroMQ pub-sub has no central server: each publisher writes to its connected
+subscribers. Messages are \emph{multipart}: the first part is the topic.
+
+\begin{pycode}
+# needs: pip install pyzmq
+import time
+import zmq
+
+ctx = zmq.Context()
+pub = ctx.socket(zmq.PUB)
+pub.bind("tcp://127.0.0.1:5556")
+time.sleep(1)                                  # let subscribers connect
+pub.send_multipart([b"eval.done", b'{"run": 7}'])
+
+sub = ctx.socket(zmq.SUB)
+sub.connect("tcp://127.0.0.1:5556")
+sub.setsockopt(zmq.SUBSCRIBE, b"eval.")        # topic prefix, as bytes
+topic, body = sub.recv_multipart()
+print(topic.decode("utf-8"), body.decode("utf-8"))
+\end{pycode}
+
+\begin{trap}[: a SUB socket receives nothing by default]
+You must subscribe. To get everything, subscribe to the empty bytes \code{b""}. Also,
+a PUB that sends right after \code{bind} may lose the first messages because subscribers
+have not connected yet (the \code{sleep} above).
+\end{trap}
+
+Other options: RabbitMQ with Pika, NATS, PyPubSub (in-process), PubSubHubbub (webhook style).
+
+% ------------------------------------------------------------
+\section{Internet Services}
+
+\subsection{Domain Name System (DNS)}
+
+DNS turns names into IP addresses. When a request hangs on ``looking up host'', DNS is
+the first suspect.
+
+%MD
+%```mermaid
+%flowchart LR
+%    A["your code<br/>getaddrinfo('api.x.test')"] -->|name?| B["DNS servers<br/>(distributed database)"]
+%    B -->|answer| A
+%    B -.-> C["address<br/>203.0.113.7"]
+%    A -->|then connect to the address| C
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[>=Stealth]
+  \node[nb] (a) at (0,0) {your code\\\code{getaddrinfo("api.x.test")}};
+  \node[nb,draw=cpurple,fill=cpurple!10] (b) at (4.8,0) {DNS servers\\(distributed database)};
+  \node[nb,draw=cgreen,fill=cgreen!10] (c) at (9.2,0) {address\\\code{203.0.113.7}};
+  \draw[->] ([yshift=3pt]a.east) -- node[above,font=\tiny\sffamily]{name?} ([yshift=3pt]b.west);
+  \draw[<-] ([yshift=-3pt]a.east) -- node[below,font=\tiny\sffamily]{answer} ([yshift=-3pt]b.west);
+  \draw[->,dashed] (b) -- (c);
+  \draw[->,thick,cblue] (c.south) -- ++(0,-0.7) -| node[pos=0.25,below,font=\tiny\sffamily]
+    {then \code{connect((ip, 443))}} (a.south);
+\end{tikzpicture}
+\end{center}
+
+The \code{socket} module has the functions. Names below resolve locally, so the output is
+stable; the \code{getaddrinfo} tuple shape is the same for real hosts.
+
+\begin{pycode}
+import socket
+
+print(socket.gethostbyname("localhost"))             # name -> IPv4 str
+print(socket.getservbyname("http"), socket.getservbyport(443))
+for info in socket.getaddrinfo("localhost", 80, socket.AF_INET,
+                               socket.SOCK_STREAM):
+    print(info)
+\end{pycode}
+\begin{rawcode}
+127.0.0.1
+80 https
+(<AddressFamily.AF_INET: 2>, <SocketKind.SOCK_STREAM: 1>, 0, '', ('127.0.0.1', 80))
+\end{rawcode}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+\textbf{Function} & \textbf{Returns} \\
+\midrule
+\code{gethostbyname(name)} & one IPv4 address as \code{str} \\
+\code{gethostbyname\_ex(name)} & \code{(canonical name, [aliases], [addresses])} \\
+\code{getaddrinfo(host, port, ...)} & list of tuples with everything needed to build a socket;
+filter with family and socket type \\
+\code{getservbyname("http")} / \code{getservbyport(80)} & service name to port number and back (IANA list) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Python email modules}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+\textbf{Module} & \textbf{Protocol} & \textbf{Use} \\
+\midrule
+\code{email} & -- & build and parse message objects \\
+\code{smtplib} & SMTP & send mail \\
+\code{poplib} & POP3 & download mail \\
+\code{imaplib} & IMAP & read mail kept on the server \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Building a message needs no server, so it can be run here:
+
+\begin{pycode}
+from email.message import EmailMessage
+
+msg = EmailMessage()
+msg["From"] = "bot@example.com"
+msg["To"] = "me@example.com"
+msg["Subject"] = "Nightly eval finished"
+msg.set_content("Score: 0.91")
+print(msg.as_string())
+\end{pycode}
+\begin{rawcode}
+From: bot@example.com
+To: me@example.com
+Subject: Nightly eval finished
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+MIME-Version: 1.0
+
+Score: 0.91
+\end{rawcode}
+
+Sending uses \code{smtplib.SMTP(host, 587)}, then \code{starttls()}, \code{login(...)},
+\code{send\_message(msg)}. I did not run that: it needs a real mail server (syntax-checked
+only). Never hard-code the password; read it from an environment variable.
+
+\subsection{Other protocols}
+
+\code{ftplib} (FTP) moves files; the standard library has modules for most other
+internet protocols too. The point: before installing a package, check whether the
+standard library already speaks the protocol.
+
+% ------------------------------------------------------------
+\section{Web Services and APIs}
+
+Websites are made for human eyes. An \emph{API} serves the same data to programs in a
+structured format, usually JSON. A scraper breaks whenever the page layout changes; an
+API changes much less often. Most APIs need a registered \emph{key} (a long token) that
+identifies you and lets the provider limit your traffic.
+
+An LLM API call is exactly this: an HTTPS request with a key in a header, a JSON body,
+and a JSON reply. The part beginners miss is the \emph{status code}.
+
+%MD
+%```mermaid
+%sequenceDiagram
+%    participant C as client
+%    participant S as API server
+%    C->>S: POST /v1/complete
+%    S-->>C: 429 slow down
+%    Note over C: wait, back off
+%    C->>S: POST (retry)
+%    S-->>C: 200 + JSON body
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[>=Stealth]
+  \node[font=\sffamily\bfseries\small,text=cblue] at (0,0.3) {client};
+  \node[font=\sffamily\bfseries\small,text=cgreen] at (7,0.3) {API server};
+  \draw[cgray] (0,0) -- (0,-4.6);
+  \draw[cgray] (7,0) -- (7,-4.6);
+  \draw[->,thick,cblue] (0,-0.6) -- node[above,font=\scriptsize\ttfamily]{POST /v1/complete} (7,-0.6);
+  \draw[->,thick,cred]  (7,-1.4) -- node[above,font=\scriptsize\ttfamily]{429 slow down} (0,-1.4);
+  \node[font=\scriptsize\sffamily,text=cgray,fill=white] at (0,-2.1) {wait, back off};
+  \draw[->,thick,cblue] (0,-2.8) -- node[above,font=\scriptsize\ttfamily]{POST (retry)} (7,-2.8);
+  \draw[->,thick,cgreen](7,-3.6) -- node[above,font=\scriptsize\ttfamily]{200 + JSON body} (0,-3.6);
+\end{tikzpicture}
+\end{center}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+\textbf{Code} & \textbf{Meaning} & \textbf{What your code should do} \\
+\midrule
+200 & OK & parse the JSON body \\
+400 & bad request & your payload is wrong; fix it, do not retry \\
+401 / 403 & bad key / not allowed & stop; check the key \\
+404 & not found & check the URL or model name \\
+429 & too many requests & wait (see a \code{retry-after} header), then retry \\
+500 / 503 & server error / overloaded & retry with exponential backoff \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+To keep this runnable offline, here is a tiny fake API on localhost using only the
+standard library, and a client that returns the status code and parsed body:
+
+\begin{pycode}
+import json
+import threading
+import urllib.error
+import urllib.request
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+class FakeLLM(BaseHTTPRequestHandler):
+    def do_POST(self):
+        size = int(self.headers.get("Content-Length", 0))
+        body = json.loads(self.rfile.read(size))
+        if self.headers.get("x-api-key") != "test-key":
+            code, out = 401, {"error": "bad key"}
+        elif len(body["prompt"]) > 20:
+            code, out = 429, {"error": "slow down"}
+        else:
+            code, out = 200, {"text": body["prompt"][::-1]}
+        data = json.dumps(out).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def log_message(self, *args):          # silence request logging
+        pass
+
+srv = HTTPServer(("127.0.0.1", 0), FakeLLM)
+threading.Thread(target=srv.serve_forever, daemon=True).start()
+url = f"http://127.0.0.1:{srv.server_address[1]}/v1/complete"
+
+def call(prompt, key="test-key"):
+    req = urllib.request.Request(
+        url,
+        data=json.dumps({"prompt": prompt}).encode("utf-8"),
+        headers={"Content-Type": "application/json", "x-api-key": key},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return resp.status, json.loads(resp.read())
+    except urllib.error.HTTPError as err:   # 4xx and 5xx raise
+        return err.code, json.loads(err.read())
+
+print(call("hello"))
+print(call("hello", key="wrong"))
+print(call("a very long prompt that is over the limit"))
+srv.shutdown()
+\end{pycode}
+\begin{rawcode}
+(200, {'text': 'olleh'})
+(401, {'error': 'bad key'})
+(429, {'error': 'slow down'})
+\end{rawcode}
+
+\begin{typecheck}
+The request body is \code{bytes} (\code{json.dumps(...).encode("utf-8")}). The reply
+body is also \code{bytes}; \code{json.loads} accepts bytes and returns a \code{dict}. With
+the popular \code{requests} package the same idea is shorter (\code{pip install requests};
+syntax-checked only): \code{resp.status\_code} is an \code{int}, \code{resp.json()} is a
+\code{dict}, and \code{resp.raise\_for\_status()} turns 4xx/5xx into an exception.
+\end{typecheck}
+
+\begin{pycode}
+# needs: pip install requests
+import os
+import requests
+
+resp = requests.post(
+    "https://api.example.test/v1/complete",
+    headers={"x-api-key": os.environ["MY_API_KEY"]},
+    json={"prompt": "hello"},
+    timeout=30,
+)
+if resp.status_code == 429:
+    print("rate limited; retry after", resp.headers.get("retry-after"))
+else:
+    resp.raise_for_status()                    # 4xx/5xx -> HTTPError
+    data = resp.json()                         # dict
+\end{pycode}
+
+\begin{gamerule}[: always set a timeout, keep keys out of code]
+A network call without a timeout can hang forever. Put API keys in environment variables,
+never in source files or git.
+\end{gamerule}
+
+% ------------------------------------------------------------
+\section{Data Serialization}
+
+Memory holds objects; a network or a file holds bytes. Converting one to the other is
+\emph{serialization} (also \emph{marshaling}); the reverse is \emph{deserialization}.
+
+%MD
+%```mermaid
+%flowchart LR
+%    O1["Python object<br/>(dict)"] -->|dumps| B1["bytes"] --> W["wire / file"] --> B2["bytes"] -->|loads| O2["object"]
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[>=Stealth]
+  \node[nb,draw=cgreen,fill=cgreen!10] (o1) at (0,0) {Python object\\\code{dict}};
+  \node[nb,draw=cgold,fill=cgold!15] (b1) at (4.2,0) {bytes};
+  \node[nb,draw=cgray,fill=cgray!10] (w) at (7.4,0) {wire / file};
+  \node[nb,draw=cgold,fill=cgold!15] (b2) at (10.2,0) {bytes};
+  \node[nb,draw=cgreen,fill=cgreen!10] (o2) at (13.2,0) {object};
+  \draw[->] (o1) -- node[above,font=\tiny\ttfamily]{dumps} (b1);
+  \draw[->] (b1) -- (w);
+  \draw[->] (w) -- (b2);
+  \draw[->] (b2) -- node[above,font=\tiny\ttfamily]{loads} (o2);
+\end{tikzpicture}
+\end{center}
+
+\subsection{JSON vs pickle}
+
+\begin{pycode}
+import datetime
+import json
+import pickle
+
+record = {"model": "m1", "tokens": 120, "ok": True, "tags": ["a", "b"]}
+wire = json.dumps(record).encode("utf-8")
+print(type(wire), wire)
+print(json.loads(wire.decode("utf-8")) == record)
+
+stamp = datetime.datetime(2026, 1, 5, 9, 30)
+try:
+    json.dumps({"at": stamp})
+except TypeError as err:
+    print("TypeError:", err)
+print(json.dumps({"at": stamp}, default=str))
+
+blob = pickle.dumps(stamp)
+print(type(blob), pickle.loads(blob) == stamp)
+
+class Tiny:
+    def __init__(self, n):
+        self.n = n
+
+copy = pickle.loads(pickle.dumps(Tiny(3)))
+print(type(copy).__name__, copy.n)
+
+print(json.loads(json.dumps((1, 2))))
+try:
+    json.dumps({1, 2})
+except TypeError as err:
+    print("TypeError:", err)
+print(json.dumps({1: "a"}), json.loads(json.dumps({1: "a"})))
+\end{pycode}
+\begin{rawcode}
+<class 'bytes'> b'{"model": "m1", "tokens": 120, "ok": true, "tags": ["a", "b"]}'
+True
+TypeError: Object of type datetime is not JSON serializable
+{"at": "2026-01-05 09:30:00"}
+<class 'bytes'> True
+Tiny 3
+[1, 2]
+TypeError: Object of type set is not JSON serializable
+{"1": "a"} {'1': 'a'}
+\end{rawcode}
+
+\begin{typecheck}
+JSON only knows: \code{dict} (string keys), \code{list}, \code{str}, \code{int}/\code{float},
+\code{True}/\code{False}, \code{None}. Everything else fails or changes shape:
+a \code{tuple} comes back as a \code{list}, a \code{set} or \code{datetime} raises
+\code{TypeError}, an \code{int} dict key comes back as \code{str}. Fix unknown types with
+\code{default=str} or by converting yourself. \code{pickle.dumps} returns \code{bytes},
+\code{json.dumps} returns \code{str}.
+\end{typecheck}
+
+\begin{trap}[: never unpickle data you do not trust]
+\code{pickle.loads} can run arbitrary code. Data from a network, an upload or a shared
+cache must never go through pickle. Use JSON (or another data-only format) at trust
+boundaries. Pickle is fine for your own temporary files; \code{multiprocessing} uses it
+internally.
+\end{trap}
+
+\subsection{Other formats}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+\textbf{Format} & \textbf{Text or binary} & \textbf{Notes} \\
+\midrule
+JSON & text & human-readable, universal on the web, few types \\
+pickle & binary & any Python object; Python-only; unsafe for untrusted data \\
+MessagePack, msgspec & binary & JSON-like data, smaller and faster \\
+Protocol Buffers, Avro, Thrift & binary & schema-defined, used with RPC \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Packages such as \textbf{Pydantic} and marshmallow go the other way: they turn raw data
+into typed objects and \emph{validate} it (types, ranges, required fields). Web servers
+use them so bytes from the wire land in the right structures. Pydantic is the one you
+will meet most in AI work (structured LLM output).
+
+% ------------------------------------------------------------
+\section{Remote Procedure Calls}
+
+An RPC makes a function on another machine look like a local call. Your side serializes
+the arguments, sends bytes, and the remote side decodes, runs the function, and sends the
+encoded result back.
+
+%MD
+%```mermaid
+%flowchart LR
+%    A["proxy.double(7)"] --> B["encode arguments"] --> C["network"] --> D["decode, find function"] --> E["run double(7)"]
+%    E -.->|encode result, send back| A
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[>=Stealth]
+  \node[nb] (a) at (0,0) {\code{proxy.double(7)}};
+  \node[nb,draw=cgold,fill=cgold!15] (b) at (4.2,0) {encode\\arguments};
+  \node[nb,draw=cgray,fill=cgray!10] (c) at (8,0) {network};
+  \node[nb,draw=cgold,fill=cgold!15] (d) at (11.8,0) {decode,\\find function};
+  \node[nb,draw=cgreen,fill=cgreen!10] (e) at (11.8,-1.5) {run \code{double(7)}};
+  \draw[->] (a) -- (b);
+  \draw[->] (b) -- (c);
+  \draw[->] (c) -- (d);
+  \draw[->] (d) -- (e);
+  \draw[->,dashed,cblue] (e.west) -- ++(-2.4,0) -- node[below,font=\tiny\sffamily]
+    {encode result, send back} (a.south |- e.west) -- (a.south);
+\end{tikzpicture}
+\end{center}
+
+\subsection{XML-RPC}
+
+The standard library has one RPC: XML-RPC over HTTP. This runs fully on localhost:
+
+\begin{pycode}
+import threading
+import xmlrpc.client
+from xmlrpc.server import SimpleXMLRPCServer
+
+def cost_usd(tokens_in, tokens_out):
+    return tokens_in * 1e-7 + tokens_out * 5e-7
+
+server = SimpleXMLRPCServer(("127.0.0.1", 0), logRequests=False)
+port = server.server_address[1]
+server.register_function(cost_usd, "cost_usd")
+t = threading.Thread(target=server.serve_forever, daemon=True)
+t.start()
+
+proxy = xmlrpc.client.ServerProxy(f"http://127.0.0.1:{port}/")
+result = proxy.cost_usd(2000, 500)       # looks like a local call
+print(result, type(result))
+try:
+    proxy.nope()                         # no such function on the server
+except xmlrpc.client.Fault as err:
+    print("Fault:", err.faultCode)
+server.shutdown()
+\end{pycode}
+\begin{rawcode}
+0.00045 <class 'float'>
+Fault: 1
+\end{rawcode}
+
+\code{proxy.cost\_usd} does not exist in the client; the proxy turns any attribute
+access into a remote call. Remote errors arrive as \code{xmlrpc.client.Fault}.
+
+\subsection{Other RPC systems}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+\textbf{System} & \textbf{Package} & \textbf{Notes} \\
+\midrule
+XML-RPC & stdlib \code{xmlrpc} & XML over HTTP, simple, verbose \\
+JSON-RPC & \code{jsonrpcserver}, \code{jsonrpcclient} & same idea in JSON \\
+MessagePack RPC & \code{msgpack-rpc-python} & binary, uses Tornado \\
+zerorpc & \code{zerorpc} & ZeroMQ + MessagePack; methods of a class become endpoints \\
+gRPC & \code{grpcio}, \code{grpcio-tools} & Google; Protocol Buffers; streaming; fast \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+gRPC works from a schema. You describe the service in a \code{.proto} file, and a tool
+generates Python client and server stubs:
+
+\begin{rawcode}
+service Pricing {
+  rpc Cost (CostRequest) returns (CostReply);
+}
+message CostRequest { int32 tokens_in = 1; int32 tokens_out = 2; }
+message CostReply   { double usd = 1; }
+\end{rawcode}
+
+A rule of thumb: REST/JSON for public APIs, gRPC for fast service-to-service calls
+inside your own system.
+
+% ------------------------------------------------------------
+\section{Remote Management}
+
+Tools that run commands on many machines at once.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+\textbf{Tool} & \textbf{Notes} \\
+\midrule
+Salt & written in Python; ZeroMQ based; scales to thousands of machines \\
+Ansible & written in Python; agentless, uses SSH \\
+Puppet, Chef & popular, tied to Ruby \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+% ------------------------------------------------------------
+\section{Big Fat Data}
+
+One machine, even a big one, hits limits in disk, memory and CPU. Spreading data across
+many machines can be faster than a single fast one. The core idea is \emph{MapReduce}:
+split the data, process each piece independently (map), then combine the partial results
+(reduce).
+
+%MD
+%```mermaid
+%flowchart LR
+%    I["big input"] --> M1["map: part 1"] --> P1["partial 1"] --> R["reduce"]
+%    I --> M2["map: part 2"] --> P2["partial 2"] --> R
+%    I --> M3["map: part 3"] --> P3["partial 3"] --> R
+%    R --> RES["result"]
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[n/.style={nb,minimum width=1.7cm,font=\scriptsize\sffamily},>=Stealth]
+  \node[n,draw=cgray,fill=cgray!10] (in) at (0,0) {big input};
+  \foreach \y/\i in {1/1,0/2,-1/3} {
+    \node[n,draw=cblue,fill=cblue!10] (m\i) at (3.4,\y) {map: part \i};
+    \draw[->] (in) -- (m\i);
+    \node[n,draw=cgold,fill=cgold!15] (p\i) at (6.4,\y) {partial \i};
+    \draw[->] (m\i) -- (p\i);
+  }
+  \node[n,draw=cgreen,fill=cgreen!10] (r) at (9.4,0) {reduce};
+  \foreach \i in {1,2,3} \draw[->] (p\i) -- (r);
+  \node[n,draw=cgreen,fill=cgreen!10,right=8mm of r] (res) {result};
+  \draw[->] (r) -- (res);
+\end{tikzpicture}
+\end{center}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+\textbf{Tool} & \textbf{Notes} \\
+\midrule
+Hadoop & Java; copies data between machines and writes to disk at each step, so batch jobs are slow. Hadoop streaming lets any language, including Python, plug in \\
+Spark & much faster (in memory); Python API (PySpark); the usual choice today \\
+Disco & Python + Erlang MapReduce; little maintained \\
+Dask & written in Python; works with NumPy, pandas, scikit-learn; scales from a laptop to clusters \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+``Big data'' often just means ``too big for my machine''. Try a bigger machine or a
+smarter format first; use a cluster only when you must.
+
+% ------------------------------------------------------------
+\section{Clouds}
+
+Servers fail, and with thousands of them, failure is routine. Peter Deutsch's ``fallacies
+of distributed computing'' list the false assumptions that cause bugs.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}X X@{}}
+\toprule
+\multicolumn{2}{@{}l}{\textbf{Things that are NOT true on a network}} \\
+\midrule
+The network is reliable. & Latency is zero. \\
+Bandwidth is infinite. & The network is secure. \\
+Topology does not change. & There is one administrator. \\
+Transport cost is zero. & The network is homogeneous. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+This is why calls to remote APIs need timeouts, retries and error handling (the status
+code table above).
+
+At scale, servers are treated as interchangeable (``livestock''): replace broken ones
+rather than nursing them. Renting machines in the cloud turns that into an API call.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+\textbf{Service} & \textbf{Python tool} & \textbf{Notes} \\
+\midrule
+Amazon Web Services & \code{boto3} & the market leader; replaces the web console with code \\
+Google Cloud & Google client libraries & Google uses Python heavily \\
+Microsoft Azure & Azure SDK for Python & third big vendor \\
+OpenStack & its REST APIs & open source cloud framework \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Docker and Kubernetes}
+
+A \emph{container} packages your app with its libraries, sharing the host's operating
+system kernel. It is lighter than a virtual machine and heavier than a virtualenv.
+\emph{Kubernetes} runs many containers for you: restarts failures, balances load, scales
+up and down.
+
+%MD
+%```text
+%Virtual machines                    Containers
+%+----------+ +----------+           +----------+ +----------+
+%| your app | | your app |           | your app | | your app |
+%| libraries| | libraries|           | libraries| | libraries|
+%| guest OS | | guest OS |           +----------+-+----------+
+%+----------+-+----------+           | container runtime     |
+%| hypervisor             |           +-----------------------+
+%+------------------------+           | host OS (shared kernel)|
+%| host OS and hardware   |           +-----------------------+
+%+------------------------+
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[l/.style={draw,minimum width=3.3cm,minimum height=6.5mm,font=\scriptsize\sffamily,
+    align=center,inner sep=2pt}]
+  \node[font=\sffamily\bfseries\small] at (0,3.4) {Virtual machines};
+  \foreach \x in {-1.8,1.8} {
+    \node[l,fill=cgreen!12,draw=cgreen] at (\x,2.6) {your app};
+    \node[l,fill=cgold!15,draw=cgold]   at (\x,2.0) {libraries};
+    \node[l,fill=cred!10,draw=cred]     at (\x,1.4) {guest OS (full)};
+  }
+  \node[l,minimum width=7.2cm,fill=cpurple!12,draw=cpurple] at (0,0.8) {hypervisor};
+  \node[l,minimum width=7.2cm,fill=cgray!12,draw=cgray] at (0,0.2) {host OS and hardware};
+  \begin{scope}[xshift=8.4cm]
+  \node[font=\sffamily\bfseries\small] at (0,3.4) {Containers};
+  \foreach \x in {-1.8,1.8} {
+    \node[l,fill=cgreen!12,draw=cgreen] at (\x,2.0) {your app};
+    \node[l,fill=cgold!15,draw=cgold]   at (\x,1.4) {libraries};
+  }
+  \node[l,minimum width=7.2cm,fill=cpurple!12,draw=cpurple] at (0,0.8) {container runtime};
+  \node[l,minimum width=7.2cm,fill=cgray!12,draw=cgray] at (0,0.2) {host OS (shared kernel)};
+  \end{scope}
+\end{tikzpicture}
+\end{center}
+
+Python clients: \code{docker} and \code{kubernetes} (\code{pip install docker kubernetes}).
+Docker is how most AI services get shipped.
+
+% ------------------------------------------------------------
+\section{Practice}
+
+\begin{practice}
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+\item Build a TCP time service on localhost: when a client sends \code{time}, the server
+  replies with the current time as an ISO string. Use the length-prefix helpers and port 0.
+\item Extend the fake API above: make it return 503 for the first two calls, then 200.
+  Write a client that retries with doubling waits and gives up after four tries.
+\item Add prefix matching to the in-process \code{Broker}, so a subscriber to
+  \code{"eval."} also receives \code{"eval.done"}.
+\item Write an XML-RPC server with one function that returns a dict. Call it from a client.
+  What happens if the function returns \code{None}?
+\item Explain in two sentences why \code{pickle.loads} on bytes from a socket is dangerous,
+  and which format you would use instead.
+\item (Needs Redis or Valkey.) Push ten job strings to a list, then write a worker that
+  loops on \code{brpop}, sleeps 0.5 s per job, and prints how many jobs remain.
+\end{enumerate}
+\end{practice}
+
+\begin{achievement}{Networking Basics}
+You can now:
+\begin{itemize}[leftmargin=*,itemsep=1pt]
+\item explain the difference between UDP and TCP and write a localhost echo with sockets;
+\item frame messages on a TCP stream and keep \code{bytes} and \code{str} apart;
+\item pick request-reply, push or pub-sub for a given problem;
+\item read HTTP status codes from an API and decide whether to retry;
+\item choose between JSON and pickle, and explain the pickle danger.
+\end{itemize}
+\end{achievement}

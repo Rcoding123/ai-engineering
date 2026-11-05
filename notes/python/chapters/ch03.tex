@@ -1,0 +1,659 @@
+% ============================================================
+%  Introducing Python, chapter 3: Numbers
+% ============================================================
+\chapter{Numbers}
+
+This chapter covers Python's simplest types: \code{bool}, \code{int} and \code{float}, plus
+two exact alternatives, \code{Fraction} and \code{Decimal}. You will learn what each operator
+returns, how Python converts between number types, and why floats can surprise you. Token
+counts, prices, batch sizes and probabilities are all numbers, so this is daily material.
+
+%MD
+%```mermaid
+%flowchart LR
+%    B["bool: True / False"] -->|"acts like 1 / 0"| I["int: whole numbers, any size"]
+%    I -->|"mixed with a float becomes"| F["float: decimals, approximate"]
+%    F -->|"mixed with a complex becomes"| C["complex: 3 + 4j"]
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\sffamily\small,>=Stealth,
+  n/.style={draw=cblue,fill=cblue!8,rounded corners=2pt,inner sep=5pt,align=center,minimum width=22mm,minimum height=11mm}]
+  \node[n,draw=cgray,fill=cgray!8] (b) at (0,0) {\code{bool}\\[-2pt]{\scriptsize True, False}};
+  \node[n] (i) at (4.2,0) {\code{int}\\[-2pt]{\scriptsize 42, $-7$, $10^{100}$}};
+  \node[n,draw=cgreen,fill=cgreen!8] (f) at (8.4,0) {\code{float}\\[-2pt]{\scriptsize 3.14, 2e-5}};
+  \node[n,draw=cpurple,fill=cpurple!8] (c) at (12.4,0) {\code{complex}\\[-2pt]{\scriptsize 3 + 4j}};
+  \draw[->,thick,cgray] (b) -- node[above,font=\scriptsize]{acts as 0/1} (i);
+  \draw[->,thick,cgray] (i) -- node[above,font=\scriptsize]{promoted} (f);
+  \draw[->,thick,cgray] (f) -- node[above,font=\scriptsize]{promoted} (c);
+\end{tikzpicture}
+\end{center}
+
+When two different number types meet in one expression, Python converts the one on the
+left of the chain to the one on the right. The result type is the ``wider'' one.
+
+% ------------------------------------------------------------
+\section{Booleans}
+
+A \code{bool} has exactly two values: \code{True} and \code{False}. Both start with a
+capital letter. Write \code{true} and Python raises a \code{NameError}.
+
+The function \code{bool(x)} converts \emph{any} value to a boolean. This is the rule behind
+\textbf{truthiness}: in an \code{if}, Python asks ``is this value truthy?''. (Chapter 6 uses it.)
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}X X@{}}
+\toprule
+\textbf{Falsy (counts as False)} & \textbf{Truthy (counts as True)} \\
+\midrule
+\code{False}, \code{None} & \code{True} \\
+\code{0}, \code{0.0}, \code{0j} & any other number, including \code{-1} and \code{0.001} \\
+\code{""} (empty string) & any non-empty string, even \code{"0"} and \code{"False"} \\
+\code{[]}, \code{()}, \code{\{\}}, \code{set()} (empty containers) & any container with at least one item, even \code{[0]} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{pycode}
+>>> bool(1), bool(-45), bool(0), bool(0.0)
+(True, True, False, False)
+>>> bool(""), bool("0"), bool("False")
+(False, True, True)
+>>> bool([]), bool([0]), bool(None)
+(False, True, False)
+\end{pycode}
+
+\begin{trap}
+\code{bool("False")} is \code{True}, because the string is not empty. If you read a setting such as
+\code{DEBUG=False} from an environment variable, it arrives as text. Compare the text instead:
+\code{value.lower() == "true"}.
+\end{trap}
+
+\begin{typecheck}[: a \texttt{bool} is an \texttt{int}]
+\code{bool} is a subtype of \code{int}. \code{True} acts as 1 and \code{False} as 0 in arithmetic.
+\begin{pycode}
+>>> True + True
+2
+>>> int(True), int(False)
+(1, 0)
+>>> isinstance(True, int)
+True
+>>> type(True + 1)
+<class 'int'>
+\end{pycode}
+\end{typecheck}
+
+% ------------------------------------------------------------
+\section{Integers}
+
+An \code{int} is a whole number with an optional sign. In Python 3 it has no fixed size limit.
+
+\subsection{Literal integers}
+
+\begin{pycode}
+>>> tokens = 1_500_000
+>>> tokens
+1500000
+>>> -42, +42
+(-42, 42)
+>>> 1,500
+(1, 500)
+\end{pycode}
+
+\begin{itemize}[itemsep=1pt]
+\item Underscores are allowed as digit separators for readability. They are ignored.
+\item Do not write commas: \code{1,500} is a \emph{tuple} of two ints, not fifteen hundred.
+\item A leading zero followed by digits (\code{007}) is a \code{SyntaxError}. Prefixes
+  \code{0b}, \code{0o}, \code{0x} mark other bases (see below).
+\end{itemize}
+
+\subsection{Integer operations}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l l l X@{}}
+\toprule
+\textbf{Op} & \textbf{Name} & \textbf{Example} & \textbf{Result} & \textbf{Result type} \\
+\midrule
+\code{+} & add & \code{5 + 8} & \code{13} & \code{int} \\
+\code{-} & subtract & \code{90 - 10} & \code{80} & \code{int} \\
+\code{*} & multiply & \code{4 * 7} & \code{28} & \code{int} \\
+\code{/} & true division & \code{7 / 2} & \code{3.5} & \textbf{always \code{float}} \\
+\code{//} & floor division & \code{7 // 2} & \code{3} & \code{int} (for int operands) \\
+\code{\%} & remainder & \code{7 \% 3} & \code{1} & \code{int} \\
+\code{**} & power & \code{3 ** 4} & \code{81} & \code{int} (\code{float} if the exponent is negative) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{pycode}
+>>> 7 / 2
+3.5
+>>> 8 / 2
+4.0
+>>> 7 // 2
+3
+>>> 7 % 2
+1
+>>> 7 ** 2
+49
+>>> 2 ** -1
+0.5
+\end{pycode}
+
+\paragraph{Quotient and remainder.}
+\code{//} and \code{\%} are a pair: \code{a == (a // b) * b + (a \% b)}. \code{divmod(a, b)} returns both
+in a tuple. This is how you split work into batches.
+
+%MD
+%```text
+%  10_500 tokens, chunk size 4_000:
+%
+%  |<---- 4000 ---->|<---- 4000 ---->|<-- 2500 -->|
+%  |    chunk 1     |    chunk 2     |  leftover  |
+%
+%  10_500 // 4_000 = 2 full chunks      10_500 % 4_000 = 2_500
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\sffamily\small]
+  \fill[cblue!15] (0,0) rectangle (4.8,0.9);   \draw[cblue] (0,0) rectangle (4.8,0.9);
+  \fill[cblue!15] (4.8,0) rectangle (9.6,0.9); \draw[cblue] (4.8,0) rectangle (9.6,0.9);
+  \fill[cgold!25] (9.6,0) rectangle (12.6,0.9); \draw[cgold] (9.6,0) rectangle (12.6,0.9);
+  \node at (2.4,0.45) {4000 \scriptsize chunk 1};
+  \node at (7.2,0.45) {4000 \scriptsize chunk 2};
+  \node at (11.1,0.45) {2500 \scriptsize rest};
+  \draw[decorate,decoration={brace,amplitude=4pt,mirror},cgray] (0,-0.15) -- (9.6,-0.15);
+  \node[font=\scriptsize\ttfamily,text=cgray] at (4.8,-0.65) {10\_500 // 4\_000 = 2 full chunks};
+  \draw[decorate,decoration={brace,amplitude=4pt,mirror},cgray] (9.6,-0.15) -- (12.6,-0.15);
+  \node[font=\scriptsize\ttfamily,text=cgray] at (11.1,-0.65) {\% = 2500};
+\end{tikzpicture}
+\end{center}
+
+\begin{pycode}
+>>> n_tokens, chunk_size = 10_500, 4_000
+>>> divmod(n_tokens, chunk_size)
+(2, 2500)
+>>> -(-n_tokens // chunk_size)
+3
+\end{pycode}
+
+The last line is a trick for \emph{ceiling} division: how many chunks you need in total,
+counting the partial one. It works because \code{//} rounds down, as the next trap explains.
+
+\begin{trap}
+\code{//} rounds toward minus infinity (it \emph{floors}), not toward zero. They differ for negatives.
+\code{int()} truncates toward zero.
+%MD
+%```text
+%        -4        -3.5        -3
+%   -----+----------+----------+-----
+%     floor <-------- x --------> int() truncates
+%     -7 // 2 = -4              int(-7 / 2) = -3
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\sffamily\small,>=Stealth]
+  \draw[thick,cgray] (-0.3,0) -- (6.3,0);
+  \foreach \x/\l in {0/-4,3/-3.5,6/-3} {
+    \draw[cgray] (\x,-0.1) -- (\x,0.1);
+    \node[font=\ttfamily\scriptsize,below] at (\x,-0.15) {\l};
+  }
+  \fill[cred] (3,0) circle (2.5pt);
+  \draw[->,thick,cgreen] (3,0.45) -- node[above,font=\scriptsize]{\texttt{//} floors} (0.1,0.45);
+  \draw[->,thick,cpurple] (3,0.45) -- node[above,font=\scriptsize]{\texttt{int()} truncates} (5.9,0.45);
+\end{tikzpicture}
+\end{center}
+\begin{pycode}
+>>> -7 // 2
+-4
+>>> -7 % 2
+1
+>>> divmod(-7, 2)
+(-4, 1)
+>>> int(-7 / 2)
+-3
+\end{pycode}
+\end{trap}
+
+\paragraph{Division by zero} raises \code{ZeroDivisionError} for both \code{/} and \code{//}.
+
+\begin{pycode}
+>>> 5 / 0
+Traceback (most recent call last):
+  ...
+ZeroDivisionError: division by zero
+>>> 7 // 0
+Traceback (most recent call last):
+  ...
+ZeroDivisionError: integer division or modulo by zero
+\end{pycode}
+
+\subsection{Integers and variables}
+
+An operator on a variable does not change the variable unless you assign the result.
+The right side of \code{=} is computed first.
+
+\begin{pycode}
+>>> budget = 1000
+>>> used = 250
+>>> budget - used
+750
+>>> budget
+1000
+>>> budget = budget - used
+>>> budget
+750
+\end{pycode}
+
+Shorthand operators combine the operation and the assignment:
+
+\begin{center}
+\begin{tabular}{@{}l l@{}}
+\toprule
+\textbf{Shorthand} & \textbf{Same as} \\
+\midrule
+\code{x += 5} & \code{x = x + 5} \\
+\code{x -= 5} & \code{x = x - 5} \\
+\code{x *= 2} & \code{x = x * 2} \\
+\code{x /= 4} & \code{x = x / 4}\quad(x becomes a \code{float}) \\
+\code{x //= 4} & \code{x = x // 4} \\
+\code{x \%= 4} & \code{x = x \% 4} \\
+\code{x **= 2} & \code{x = x ** 2} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{pycode}
+>>> budget = 750
+>>> budget //= 4
+>>> budget
+187
+>>> budget /= 2
+>>> budget
+93.5
+\end{pycode}
+
+\subsection{Precedence}
+
+Python evaluates operators in a fixed order, tightest binding first. When in doubt, add parentheses.
+
+\begin{center}
+\begin{tabular}{@{}c l l@{}}
+\toprule
+\textbf{Level} & \textbf{Operators} & \textbf{Note} \\
+\midrule
+1 (first) & \code{(...)} & parentheses always win \\
+2 & \code{**} & right to left: \code{2 ** 3 ** 2} is \code{2 ** 9} \\
+3 & unary \code{+x}, \code{-x} & \code{-3 ** 2} is \code{-(3 ** 2)} \\
+4 & \code{*}, \code{/}, \code{//}, \code{\%} & left to right \\
+5 (last) & \code{+}, \code{-} & left to right \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{pycode}
+>>> 2 + 3 * 4
+14
+>>> (2 + 3) * 4
+20
+>>> -3 ** 2
+-9
+>>> (-3) ** 2
+9
+>>> 2 ** 3 ** 2
+512
+\end{pycode}
+
+\subsection{Bases}
+
+Integers are decimal by default. Prefixes write them in binary, octal or hexadecimal. The
+interpreter always prints the value in decimal. You may never need other bases in daily work, but
+you will see hex in colors, memory addresses and byte data.
+
+\begin{center}
+\begin{tabular}{@{}l l l l@{}}
+\toprule
+\textbf{Base} & \textbf{Prefix} & \textbf{Digits} & \textbf{Value of 10 in that base} \\
+\midrule
+2 (binary) & \code{0b} & 0, 1 & 2 \\
+8 (octal) & \code{0o} & 0--7 & 8 \\
+10 (decimal) & none & 0--9 & 10 \\
+16 (hex) & \code{0x} & 0--9, a--f & 16 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Hex is handy because one hex digit equals exactly four bits, so a byte is two hex digits.
+
+%MD
+%```text
+%  byte 65  =  0100 0001   (binary)
+%              \__/ \__/
+%               4    1      (hex digits)   ->  0x41
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\ttfamily\small]
+  \foreach \b/\f [count=\i from 0] in {0/white,1/cgold!45,0/white,0/white,0/white,0/white,0/white,1/cgold!45} {
+    \node[draw=cgray,fill=\f,minimum width=8mm,minimum height=8mm] at ({0.85*\i+0.2*(\i>3)},0) {\b};
+  }
+  \draw[decorate,decoration={brace,amplitude=3pt,mirror},cblue] (-0.4,-0.5) -- (2.95,-0.5);
+  \draw[decorate,decoration={brace,amplitude=3pt,mirror},cgreen] (3.2,-0.5) -- (6.55,-0.5);
+  \node[font=\sffamily\bfseries,text=cblue] at (1.275,-1.1) {4};
+  \node[font=\sffamily\bfseries,text=cgreen] at (4.9,-1.1) {1};
+  \node[font=\sffamily\small,anchor=west] at (7.1,0) {= \texttt{0x41} = 65};
+\end{tikzpicture}
+\end{center}
+
+\begin{pycode}
+>>> 0b101, 0o17, 0xff
+(5, 15, 255)
+>>> bin(10), oct(10), hex(255)
+('0b1010', '0o12', '0xff')
+>>> int("ff", 16), int("101", 2)
+(255, 5)
+>>> chr(72), ord("H")
+('H', 72)
+\end{pycode}
+
+Note that \code{bin()}, \code{oct()} and \code{hex()} return \emph{strings}, not ints. \code{chr()} turns a
+code number into a one-character string; \code{ord()} turns it back.
+
+\subsection{Type conversions}
+
+\code{int(x)} takes one argument and returns an \code{int}. What it accepts depends on the input type.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+\textbf{Input} & \textbf{Result} & \textbf{Rule} \\
+\midrule
+\code{int(True)} & \code{1} & bools become 1 or 0 \\
+\code{int(98.6)} & \code{98} & float: drops the fraction (toward zero) \\
+\code{int("42")} & \code{42} & string of digits; sign, \code{\_} and surrounding spaces are fine \\
+\code{int("10", 2)} & \code{2} & second argument gives the base of the text \\
+\code{int("3.5")} & \textbf{ValueError} & a string with a decimal point is not accepted \\
+\code{int("")} & \textbf{ValueError} & empty text \\
+\code{int("1e3")} & \textbf{ValueError} & exponent notation is not accepted \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{pycode}
+>>> int(3.99), int(-3.99)
+(3, -3)
+>>> int("42"), int(" 42 "), int("1_000"), int("+7")
+(42, 42, 1000, 7)
+>>> int("3.5")
+Traceback (most recent call last):
+  ...
+ValueError: invalid literal for int() with base 10: '3.5'
+>>> int(float("3.5"))
+3
+\end{pycode}
+
+\begin{gamerule}
+User input and JSON values often arrive as strings. Convert at the edge (\code{int(text)},
+\code{float(text)}) and catch \code{ValueError}. Do not pass text into arithmetic.
+\end{gamerule}
+
+When types are mixed in arithmetic, Python promotes automatically:
+
+\begin{center}
+\begin{tabular}{@{}l l@{}}
+\toprule
+\textbf{Expression} & \textbf{Result type} \\
+\midrule
+\code{int + int}, \code{int * int} & \code{int} \\
+\code{int + float} & \code{float} \\
+\code{int / int} & \code{float} \\
+\code{int // int} & \code{int} \\
+\code{float // int} & \code{float} (value is still floored: \code{7.0 // 2} is \code{3.0}) \\
+\code{bool + int} & \code{int} \\
+\code{bool + float} & \code{float} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{pycode}
+>>> 4 + 7.0
+11.0
+>>> True + 2.5
+3.5
+>>> 7.0 // 2
+3.0
+\end{pycode}
+
+\subsection{How big is an int?}
+
+Older languages limit integers to 32 or 64 bits and overflow past that. Python 3 integers grow
+as needed; only your memory limits them.
+
+\begin{pycode}
+>>> 2 ** 100
+1267650600228229401496703205376
+>>> len(str(10 ** 50))
+51
+\end{pycode}
+
+% ------------------------------------------------------------
+\section{Floats}
+
+A \code{float} is a number with a fractional part, stored in binary.
+
+\begin{pycode}
+>>> 5., 5e1, 2.5e-3, 1_000.5
+(5.0, 50.0, 0.0025, 1000.5)
+>>> float("3.14"), float(7), float(True)
+(3.14, 7.0, 1.0)
+>>> float("1e3")
+1000.0
+>>> float("abc")
+Traceback (most recent call last):
+  ...
+ValueError: could not convert string to float: 'abc'
+\end{pycode}
+
+\begin{itemize}[itemsep=1pt]
+\item Exponent form: \code{2.5e-3} means $2.5\times10^{-3}$.
+\item All the integer operators work on floats; \code{divmod} works too.
+\item \code{float()} accepts strings with a decimal point or exponent; \code{int()} does not.
+\end{itemize}
+
+\subsection{Rounding}
+
+\code{round(x)} returns an \code{int}. \code{round(x, n)} keeps \code{n} decimal places and returns a \code{float}.
+Exact halves round to the \emph{nearest even} number, so \code{round(2.5)} is 2, not 3.
+
+%MD
+%```text
+%  2.5 sits exactly between 2 and 3  ->  goes to the EVEN one: 2
+%  3.5 sits exactly between 3 and 4  ->  goes to the EVEN one: 4
+%```
+%ENDMD
+\begin{center}
+\begin{tikzpicture}[font=\sffamily\small,>=Stealth]
+  \draw[thick,cgray] (0,0) -- (3.6,0);
+  \foreach \x/\l in {0.3/2,1.8/2.5,3.3/3} {\draw[cgray] (\x,-0.08) -- (\x,0.08); \node[font=\ttfamily\scriptsize,below] at (\x,-0.12) {\l};}
+  \draw[->,thick,cgreen] (1.8,0.35) -- (0.45,0.35);
+  \node[font=\scriptsize,text=cgreen] at (1.8,0.75) {\texttt{round(2.5)} = 2 (even)};
+  \draw[thick,cgray] (6,0) -- (9.6,0);
+  \foreach \x/\l in {6.3/3,7.8/3.5,9.3/4} {\draw[cgray] (\x,-0.08) -- (\x,0.08); \node[font=\ttfamily\scriptsize,below] at (\x,-0.12) {\l};}
+  \draw[->,thick,cgreen] (7.8,0.35) -- (9.15,0.35);
+  \node[font=\scriptsize,text=cgreen] at (7.8,0.75) {\texttt{round(3.5)} = 4 (even)};
+\end{tikzpicture}
+\end{center}
+
+\begin{pycode}
+>>> round(3.14159, 2)
+3.14
+>>> round(2.5), round(3.5), round(-2.5)
+(2, 4, -2)
+>>> type(round(3.7)), type(round(3.7, 1))
+(<class 'int'>, <class 'float'>)
+\end{pycode}
+
+\subsection{Special float values}
+
+Floats also include \code{inf} (overflow) and \code{nan} (``not a number''). \code{nan} is not equal to
+anything, not even itself, so test it with \code{math.isnan}. NaNs can sneak into data
+pipelines and silently poison averages.
+
+\begin{pycode}
+>>> 1e308 * 10
+inf
+>>> import math
+>>> nan = float("nan")
+>>> nan == nan
+False
+>>> math.isnan(nan)
+True
+\end{pycode}
+
+% ------------------------------------------------------------
+\section{Floats Are Not Exact}
+
+Binary storage cannot hold most decimal fractions exactly, just as decimal cannot hold
+$\tfrac13$. The tiny error is small but real.
+
+\begin{pycode}
+>>> 1 / 3
+0.3333333333333333
+>>> 0.1 + 0.2
+0.30000000000000004
+>>> 0.1 + 0.2 == 0.3
+False
+>>> f"{0.1:.20f}"
+'0.10000000000000000555'
+\end{pycode}
+
+\begin{gamerule}
+Never compare floats with \code{==}. Use \code{math.isclose(a, b)}, which allows a small
+tolerance. Python's standard library offers exact alternatives for when it matters.
+\begin{pycode}
+>>> import math
+>>> math.isclose(0.1 + 0.2, 0.3)
+True
+\end{pycode}
+\end{gamerule}
+
+\subsection{Fractions}
+
+\code{fractions.Fraction} stores a numerator and a denominator, so it is exact for ratios.
+
+\begin{pycode}
+>>> from fractions import Fraction
+>>> Fraction(1, 3) + Fraction(1, 6)
+Fraction(1, 2)
+>>> Fraction("0.1") + Fraction("0.2") == Fraction("0.3")
+True
+>>> float(Fraction(1, 8))
+0.125
+\end{pycode}
+
+\subsection{Decimals}
+
+\code{decimal.Decimal} stores decimal digits exactly. Use it for money. Always build it from
+a \emph{string}; building it from a float copies the float's error.
+
+\begin{pycode}
+>>> from decimal import Decimal
+>>> Decimal("0.10") + Decimal("0.20")
+Decimal('0.30')
+>>> Decimal(0.1) == Decimal("0.1")
+False
+\end{pycode}
+
+Another common approach is to count in the smallest unit as an \code{int} (cents, or
+millionths of a dollar) and convert only for display.
+
+\begin{pycode}
+>>> price_cents, qty = 1999, 3
+>>> total_cents = price_cents * qty
+>>> f"${total_cents / 100:.2f}"
+'$59.97'
+\end{pycode}
+
+\begin{boss}[: choose the right number type]
+Floats are right for measurements and model scores; they are wrong for money and for exact equality.
+Ask what you are counting before you pick a type.
+%MD
+%```mermaid
+%flowchart TD
+%    Q{"What are you storing?"}
+%    Q -->|"whole counts (tokens, rows)"| I["int"]
+%    Q -->|"money"| D["Decimal from strings, or int cents"]
+%    Q -->|"exact ratios"| R["Fraction"]
+%    Q -->|"measurements, probabilities, scores"| F["float + math.isclose"]
+%```
+%ENDMD
+\medskip
+\begin{center}
+\begin{tikzpicture}[font=\sffamily\small,>=Stealth,
+  q/.style={draw=cgold,fill=cgold!10,rounded corners=8pt,inner sep=5pt},
+  a/.style={draw=cblue,fill=cblue!8,rounded corners=2pt,inner sep=4pt,font=\ttfamily\small}]
+  \node[q] (q) at (6,1.4) {what are you storing?};
+  \node[a] (i) at (0.6,-0.4) {int};
+  \node[a] (d) at (4.0,-0.4) {Decimal / int cents};
+  \node[a] (r) at (8.0,-0.4) {Fraction};
+  \node[a] (f) at (11.4,-0.4) {float + isclose};
+  \draw[->,thick,cgray] (q) -- node[left,font=\scriptsize,pos=0.6]{counts} (i);
+  \draw[->,thick,cgray] (q) -- node[left,font=\scriptsize,pos=0.6]{money} (d);
+  \draw[->,thick,cgray] (q) -- node[right,font=\scriptsize,pos=0.6]{exact ratios} (r);
+  \draw[->,thick,cgray] (q) -- node[right,font=\scriptsize,pos=0.6]{measurements} (f);
+\end{tikzpicture}
+\end{center}
+A worked example. The prices are invented for the demo.
+\begin{pycode}
+>>> from decimal import Decimal
+>>> tokens_in, tokens_out = 12_000, 800
+>>> rate_in, rate_out = Decimal("3.00"), Decimal("15.00")
+>>> cost = (tokens_in * rate_in + tokens_out * rate_out) / 1_000_000
+>>> cost
+Decimal('0.048')
+\end{pycode}
+Rates are dollars per million tokens. The \code{int} times \code{Decimal} multiplication
+is allowed; mixing \code{Decimal} with \code{float} is not.
+\end{boss}
+
+\section{Math Functions}
+
+A few functions are always available (\code{abs}, \code{min}, \code{max}, \code{round}, \code{divmod}); the rest
+live in the \code{math} module (Chapter 25 covers more). Complex numbers also exist, written with a \code{j}.
+
+\begin{pycode}
+>>> import math
+>>> abs(-3), min(2, 9), max(2, 9)
+(3, 2, 9)
+>>> math.floor(2.7), math.ceil(2.1), math.sqrt(2)
+(2, 3, 1.4142135623730951)
+>>> abs(3 + 4j)
+5.0
+\end{pycode}
+
+\section{Review}
+
+Booleans are tiny integers with a truthiness rule behind them. Integers have unlimited size.
+\code{/} always gives a float, \code{//} floors. Floats are approximate: compare with a tolerance
+and use \code{Decimal} or integer cents for money. Next: text.
+
+\begin{practice}
+\begin{enumerate}[itemsep=1pt]
+\item What type does \code{9 / 3} return, and what does \code{9 // 3} return?
+\item Predict \code{-9 // 4}, \code{-9 \% 4} and \code{int(-9 / 4)}, then check them.
+\item Why is \code{bool("0")} true while \code{bool(0)} is false?
+\item You have 1\,234 documents and send them 100 at a time. Write one expression for the number of batches.
+\item Why does \code{0.1 + 0.2 == 0.3} fail, and what do you write instead?
+\item Which conversions raise \code{ValueError}: \code{int("12")}, \code{int("12.0")}, \code{float("12.0")}, \code{int(" 12 ")}?
+\end{enumerate}
+\end{practice}
+
+\begin{achievement}{Number Cruncher}
+\begin{itemize}[itemsep=1pt]
+\item Predict the type and value of any expression with \code{+ - * / // \% **}.
+\item Split totals into batches with \code{divmod}, and know that \code{//} floors.
+\item Convert between \code{int}, \code{float}, \code{bool} and \code{str} and handle \code{ValueError}.
+\item Explain float inexactness and choose \code{isclose}, \code{Decimal}, \code{Fraction} or integer cents.
+\item Use truthiness rules without guessing.
+\end{itemize}
+\end{achievement}

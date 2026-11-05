@@ -1,0 +1,955 @@
+% ============================================================
+%  Book chapter 21: Data in Time: Concurrency
+% ============================================================
+\chapter{Data in Time: Concurrency}
+
+\textbf{What this chapter gives you:} a map of the ways Python can do more than one thing at a
+time (processes, threads, a thread pool, \code{asyncio}, queues), and a rule for choosing among
+them. The core question is always: is my program \emph{waiting} (on an API, a disk, a network) or
+\emph{computing}? Calling many LLM APIs at once is the typical case, and this is where it pays off.
+All examples use \code{sleep} to fake slow network calls, so you can run them offline.
+
+\tikzset{c21n/.style={draw=#1,fill=#1!10,rounded corners=3pt,minimum height=8mm,inner sep=4pt,
+    font=\ttfamily\small},
+  c21w/.style={draw=cblue,fill=cblue!30,minimum height=4mm,inner sep=0pt},
+  c21i/.style={draw=cgray,fill=cgray!15,minimum height=4mm,inner sep=0pt}}
+
+% ------------------------------------------------------------
+\section{Programs and Processes}
+
+When you run a program, the operating system creates a \emph{process}: its own memory, its own
+open files, its own ID. Processes are isolated. One cannot read another's variables. The OS gives
+each a short slice of CPU time and switches between them so fast that they seem to run together.
+
+\begin{pycode}
+import os, sys
+
+print(type(os.getpid()), type(os.cpu_count()), type(os.getcwd()))
+\end{pycode}
+\begin{rawcode}
+<class 'int'> <class 'int'> <class 'str'>
+\end{rawcode}
+
+\code{os.getpid()} is the process ID (an \code{int}), \code{os.cpu\_count()} the number of logical
+CPUs, \code{os.getcwd()} the current directory (a \code{str}). Other \code{os} helpers such as
+\code{os.uname()}, \code{os.getloadavg()} and \code{os.getuid()} exist only on Unix-like systems.
+The third-party \code{psutil} package (\code{pip install psutil}) gives CPU, memory, disk and
+per-process information on every platform; it is not needed here.
+
+\subsection{Create a process with subprocess}
+
+\code{subprocess} starts \emph{another program} and talks to it. The modern entry point is
+\code{subprocess.run}. It waits for the child to finish and returns a \code{CompletedProcess}.
+
+\begin{center}
+\begin{tikzpicture}[>=Stealth]
+  \node[c21n=cblue,align=center] (p) at (0,0) {your Python\\[-1pt]{\scriptsize\sffamily parent}};
+  \node[c21n=cgreen,align=center] (c) at (6,0) {other program\\[-1pt]{\scriptsize\sffamily child}};
+  \draw[->,thick] ([yshift=3mm]p.east) -- node[above,font=\ttfamily\scriptsize]{args list} ([yshift=3mm]c.west);
+  \draw[<-,thick] ([yshift=-3mm]p.east) -- node[below,font=\ttfamily\scriptsize]{stdout, stderr, returncode} ([yshift=-3mm]c.west);
+\end{tikzpicture}
+\end{center}
+% MD-BEGIN
+% ```mermaid
+% flowchart LR
+%     P["your Python (parent)"] -- "args list" --> C["other program (child)"]
+%     C -- "stdout, stderr, returncode" --> P
+% ```
+% MD-END
+
+To stay portable, the examples start the Python interpreter itself (\code{sys.executable}).
+
+\begin{pycode}
+import subprocess
+
+r = subprocess.run([sys.executable, "-c", "print('hi from child')"],
+                   capture_output=True, text=True)
+print(type(r).__name__, r.returncode, repr(r.stdout), repr(r.stderr))
+r3 = subprocess.run([sys.executable, "-c", "import sys; sys.exit(3)"])
+print(r3.returncode)
+try:
+    subprocess.run([sys.executable, "-c", "raise SystemExit(2)"], check=True)
+except subprocess.CalledProcessError as e:
+    print("failed with", e.returncode)
+out = subprocess.check_output([sys.executable, "-c", "print(1 + 1)"])
+print(out.strip(), type(out))
+\end{pycode}
+\begin{rawcode}
+CompletedProcess 0 'hi from child\n' ''
+3
+failed with 2
+b'2' <class 'bytes'>
+\end{rawcode}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+\textbf{Call} & \textbf{What it gives you} \\
+\midrule
+\code{run(args, capture\_output=True, text=True)} & \code{CompletedProcess} with \code{.stdout} and \code{.stderr} as \code{str}, and \code{.returncode} \\
+\code{run(..., check=True)} & raises \code{CalledProcessError} if the exit code is not 0 \\
+\code{check\_output(args)} & only stdout, as \code{bytes} unless \code{text=True}; raises on failure \\
+\code{getoutput(cmd)} & shell command string in, output \code{str} out (stdout and stderr mixed) \\
+\code{getstatusoutput(cmd)} & tuple \code{(status, output)} \\
+\code{call(args)} & runs it, output goes to your terminal, returns the exit code \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{typecheck}
+Without \code{text=True}, \code{.stdout} is \code{bytes}. With it, \code{str}. The exit status
+is an \code{int}: \code{0} means success, anything else means failure. Pass the command as a
+\emph{list} of strings: \code{["git", "status"]}.
+\end{typecheck}
+
+\begin{trap}
+\code{shell=True} (or \code{getoutput}) hands a single string to a shell. If any part of that
+string comes from user input or model output, a crafted value such as \code{x; rm -rf \textasciitilde} can run
+extra commands. Prefer the list form without a shell. Never build shell strings from untrusted
+text.
+\end{trap}
+
+\subsection{Create a process with multiprocessing}
+
+\code{multiprocessing} runs a \emph{Python function} in a new process. Each process has its own
+interpreter and its own memory, so it can use a separate CPU core. A \code{Pool} hands a list of
+inputs to a fixed set of worker processes.
+
+\begin{pycode}
+# file: mp_demo.py
+import multiprocessing as mp
+
+
+def count_primes(limit):                  # CPU-bound work
+    n = 0
+    for x in range(2, limit):
+        if all(x % d for d in range(2, int(x ** 0.5) + 1)):
+            n += 1
+    return n
+
+
+def square_to(q, n):
+    q.put((n, n * n))
+
+
+if __name__ == "__main__":                # required on Windows and macOS
+    with mp.Pool(2) as pool:
+        print(pool.map(count_primes, [100, 1000, 10000]))
+    q = mp.Queue()
+    ps = [mp.Process(target=square_to, args=(q, n)) for n in range(3)]
+    for p in ps:
+        p.start()
+    got = sorted(q.get() for _ in ps)
+    for p in ps:
+        p.join()
+    print(got, [p.exitcode for p in ps])
+\end{pycode}
+\begin{rawcode}
+[25, 168, 1229]
+[(0, 0), (1, 1), (2, 4)] [0, 0, 0]
+\end{rawcode}
+
+Save this as a file and run it; processes do not work well in a notebook or the REPL.
+The numbers are the counts of primes below 100, 1000 and 10000.
+
+\begin{gamerule}
+Always put the start-up code under \code{if \_\_name\_\_ == "\_\_main\_\_":}. On Windows and macOS a
+new process \emph{re-imports} your file. Without the guard it would start new processes again and
+again.
+\end{gamerule}
+
+\begin{trap}
+A child process cannot change your variables. Whatever it computes must come back through a
+\code{Queue}, a \code{Pipe}, a return value (\code{Pool.map}) or a file. Arguments and results
+are pickled (serialized) on the way, so they must be picklable. Lambdas and open files are not.
+\end{trap}
+
+\subsection{Kill a process with terminate()}
+
+A process you started can be stopped with \code{p.terminate()}, followed by \code{p.join()} to
+collect it. \code{p.is\_alive()} tells you whether it still runs, and \code{p.exitcode} is
+\code{None} until it ends. Threads have no equivalent, which is one reason to use processes for
+work that you may need to cancel hard.
+
+\begin{pycode}
+# file: mp_kill.py
+import multiprocessing as mp, time
+
+
+def forever():
+    while True:
+        time.sleep(0.1)
+
+
+if __name__ == "__main__":
+    p = mp.Process(target=forever)
+    p.start()
+    print(p.is_alive())
+    p.terminate()
+    p.join()
+    print(p.is_alive(), p.exitcode is not None)
+\end{pycode}
+\begin{rawcode}
+True
+False True
+\end{rawcode}
+
+% ------------------------------------------------------------
+\section{Command Automation}
+
+For repeatable command-line tasks, third-party tools wrap \code{subprocess} with a nicer
+interface. \code{invoke} turns decorated Python functions into command-line tasks.
+
+\begin{pycode}
+# needs: pip install invoke   (not run in these notes)
+# tasks.py
+from invoke import task
+
+@task
+def clean(ctx):               # ctx is required, invoke fills it in
+    ctx.run("echo cleaning")
+\end{pycode}
+
+You then type \code{invoke clean} in a shell, and \code{invoke -l} lists the tasks. Related
+tools: \code{click} (build command-line programs), \code{doit}, \code{sh} (call commands like
+functions) and \code{fabric} (remote commands over SSH). Reach for them only when plain
+\code{subprocess.run} and a small script stop being enough.
+
+% ------------------------------------------------------------
+\section{Concurrency}
+
+A program is usually slow for one of two reasons.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X X@{}}
+\toprule
+ & \textbf{I/O bound} & \textbf{CPU bound} \\
+\midrule
+The program is ... & waiting for network, disk, a database, an API & busy calculating \\
+Typical AI examples & calling LLM APIs, downloading files, reading many files & tokenizing a huge corpus, parsing, local math \\
+The CPU is ... & mostly idle & fully used \\
+What helps & overlap the waiting & use more CPU cores \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\emph{Synchronous} code does one thing, finishes, then starts the next. \emph{Asynchronous} code
+lets other work proceed while one task waits. The picture shows why that matters. Every call
+needs a little of our code (blue) and a long wait (gray).
+
+\begin{center}
+\begin{tikzpicture}[>=Stealth,x=0.5cm]
+  \node[font=\sffamily\footnotesize,anchor=west] at (0,0.6) {One after another (total 18 units)};
+  \foreach \a/\b/\y/\k in {0/1/0/w, 1/5/0/i, 5/6/0/w, 6/7/-0.55/w, 7/11/-0.55/i, 11/12/-0.55/w,
+        12/13/-1.1/w, 13/17/-1.1/i, 17/18/-1.1/w} {
+    \if\k w \draw[c21w] (\a,\y-0.2) rectangle (\b,\y+0.2);\else \draw[c21i] (\a,\y-0.2) rectangle (\b,\y+0.2);\fi}
+  \node[font=\sffamily\tiny,anchor=east] at (-0.2,0) {call A};
+  \node[font=\sffamily\tiny,anchor=east] at (-0.2,-0.55) {call B};
+  \node[font=\sffamily\tiny,anchor=east] at (-0.2,-1.1) {call C};
+  \node[font=\sffamily\footnotesize,anchor=west] at (0,-1.9) {Overlapped waiting (total 8 units)};
+  \foreach \a/\b/\y/\k in {0/1/-2.5/w, 1/5/-2.5/i, 5/6/-2.5/w, 1/2/-3.05/w, 2/6/-3.05/i, 6/7/-3.05/w,
+        2/3/-3.6/w, 3/7/-3.6/i, 7/8/-3.6/w} {
+    \if\k w \draw[c21w] (\a,\y-0.2) rectangle (\b,\y+0.2);\else \draw[c21i] (\a,\y-0.2) rectangle (\b,\y+0.2);\fi}
+  \node[font=\sffamily\tiny,anchor=east] at (-0.2,-2.5) {call A};
+  \node[font=\sffamily\tiny,anchor=east] at (-0.2,-3.05) {call B};
+  \node[font=\sffamily\tiny,anchor=east] at (-0.2,-3.6) {call C};
+  \draw[->,thick,cgray] (0,-4.2) -- (18.5,-4.2) node[right,font=\sffamily\scriptsize]{time};
+  \draw[c21w] (8,-4.9) rectangle (9,-4.6); \node[font=\sffamily\scriptsize,anchor=west] at (9.2,-4.75) {our code runs};
+  \draw[c21i] (13,-4.9) rectangle (14,-4.6); \node[font=\sffamily\scriptsize,anchor=west] at (14.2,-4.75) {waiting for I/O};
+\end{tikzpicture}
+\end{center}
+% MD-BEGIN
+% ```text
+% time ->  0    5    10   15   18
+% One after another (18 units):
+%   call A [#][....][#]
+%   call B             [#][....][#]
+%   call C                         [#][....][#]
+%
+% Overlapped waiting (8 units):
+%   call A [#][....][#]
+%   call B    [#][....][#]
+%   call C       [#][....][#]
+%
+% [#] = our code runs      [....] = waiting for I/O
+% ```
+% MD-END
+
+The CPU is idle during every gray block. Overlapping the waits cuts total time from 18 units to
+8, without any extra CPU. If the work were \emph{computing} instead, the blue blocks would be
+long and overlap would not help on one core. That case needs several cores, hence several
+processes.
+
+\subsection{Queues}
+
+A queue holds items in order: you add at one end and take from the other. \emph{FIFO} means first
+in, first out. Queues let one part of a program hand work to another without the two having to
+move at the same speed. The producer puts jobs in. The workers take jobs out when free.
+
+\begin{center}
+\begin{tikzpicture}[>=Stealth]
+  \node[c21n=cgreen] (p) at (0,0) {producer};
+  \foreach \i/\t in {0/job 3, 1/job 2, 2/job 1} \node[draw=cgray,fill=cgray!10,minimum width=14mm,minimum height=8mm,font=\ttfamily\scriptsize] (q\i) at (3.5+\i*1.5,0) {\t};
+  \node[font=\sffamily\scriptsize,text=cgray] at (5,0.75) {queue (FIFO)};
+  \node[c21n=cblue] (w1) at (10.5,0.7) {worker 1};
+  \node[c21n=cblue] (w2) at (10.5,-0.7) {worker 2};
+  \draw[->,thick] (p) -- node[above,font=\ttfamily\scriptsize]{put} (q0.west);
+  \draw[->,thick] (q2.east) -- node[above,font=\ttfamily\scriptsize,sloped]{get} (w1.west);
+  \draw[->,thick] (q2.east) -- node[below,font=\ttfamily\scriptsize,sloped]{get} (w2.west);
+\end{tikzpicture}
+\end{center}
+% MD-BEGIN
+% ```mermaid
+% flowchart LR
+%     P["producer"] -- put --> Q["queue: job 3, job 2, job 1 (FIFO)"]
+%     Q -- get --> W1["worker 1"]
+%     Q -- get --> W2["worker 2"]
+% ```
+% MD-END
+
+There is one queue type per world: \code{multiprocessing.Queue} (between processes),
+\code{queue.Queue} (between threads), \code{asyncio.Queue} (between coroutines), and external
+servers such as Redis (between machines). Their methods look the same: \code{put}, \code{get},
+\code{task\_done}, \code{join}.
+
+A common trick is a \emph{sentinel}: a special item such as \code{None} that means ``no more
+work''. Each worker stops when it sees it.
+
+\begin{pycode}
+import queue, threading
+
+q = queue.Queue()
+results = []
+
+def consumer():
+    while True:
+        item = q.get()                 # blocks until an item arrives
+        if item is None:               # sentinel: stop
+            q.task_done()
+            break
+        results.append(item.upper())
+        q.task_done()
+
+c = threading.Thread(target=consumer)
+c.start()
+for w in ["salad", "bread", "soup"]:
+    q.put(w)
+q.put(None)
+q.join()                               # wait until every item is processed
+c.join()
+print(results)
+\end{pycode}
+\begin{rawcode}
+['SALAD', 'BREAD', 'SOUP']
+\end{rawcode}
+
+\subsection{Threads}
+
+A \emph{thread} is a path of execution inside a process. All threads of a process share the same
+memory. That is what makes them light and handy, and also what makes them dangerous.
+
+\begin{center}
+\begin{tikzpicture}[>=Stealth,
+    proc/.style={draw=cblue,rounded corners=3pt,fill=cblue!5,minimum width=3.6cm,minimum height=2.6cm},
+    mem/.style={draw=cgold,fill=cgold!15,minimum width=3.0cm,minimum height=0.7cm,font=\sffamily\scriptsize},
+    th/.style={draw=cgreen,fill=cgreen!12,minimum width=0.9cm,minimum height=0.6cm,font=\sffamily\tiny}]
+  \node[font=\sffamily\footnotesize] at (1.6,1.9) {Two processes: separate memory};
+  \node[proc] at (0,0) {}; \node[font=\sffamily\tiny,anchor=north] at (0,1.2) {process 1};
+  \node[mem] at (0,0.3) {own memory}; \node[th] at (0,-0.6) {thread};
+  \node[proc] at (3.8,0) {}; \node[font=\sffamily\tiny,anchor=north] at (3.8,1.2) {process 2};
+  \node[mem] at (3.8,0.3) {own memory}; \node[th] at (3.8,-0.6) {thread};
+  \node[font=\sffamily\footnotesize] at (10.2,1.9) {One process, three threads: shared memory};
+  \node[proc,minimum width=5.6cm] at (10.2,0) {}; \node[font=\sffamily\tiny,anchor=north] at (10.2,1.2) {process};
+  \node[mem,minimum width=4.8cm] (sm) at (10.2,0.3) {shared memory (all variables)};
+  \foreach \x in {8.8,10.2,11.6} {\node[th] at (\x,-0.7) {thread}; \draw[cgray] (\x,-0.4) -- (\x,-0.05);}
+\end{tikzpicture}
+\end{center}
+% MD-BEGIN
+% ```text
+% Two processes: separate memory         One process, three threads: shared memory
+% +-------------+  +-------------+       +------------------------------------+
+% | own memory  |  | own memory  |       |  shared memory (all variables)     |
+% | [thread]    |  | [thread]    |       |  [thread] [thread] [thread]        |
+% +-------------+  +-------------+       +------------------------------------+
+% ```
+% MD-END
+
+\begin{pycode}
+import threading, time
+
+def fake_call(i):
+    time.sleep(0.2)               # pretend to wait for a network reply
+    return i * i
+
+t = threading.Thread(target=fake_call, args=(1,))
+t.start()
+t.join()                          # wait for the thread to finish
+print(threading.current_thread().name, threading.active_count())
+\end{pycode}
+\begin{rawcode}
+MainThread 1
+\end{rawcode}
+
+\code{Thread(target=f, args=(...))} makes a thread, \code{start()} launches it, \code{join()}
+waits for it. A thread's return value is lost, so give it a queue or a list to write into (or use
+a thread pool, below). There is no \code{terminate()} for threads.
+
+\subsubsection*{Shared data and locks}
+
+When two threads change the same variable, the order of tiny steps can interleave and results go
+wrong (a \emph{race condition}). A \code{Lock} lets only one thread into a block at a time.
+
+\begin{pycode}
+counter = 0
+lock = threading.Lock()
+
+def work():
+    global counter
+    for _ in range(50000):
+        with lock:                # only one thread at a time in here
+            counter += 1
+
+ts = [threading.Thread(target=work) for _ in range(4)]
+for t in ts:
+    t.start()
+for t in ts:
+    t.join()
+print(counter)
+\end{pycode}
+\begin{rawcode}
+200000
+\end{rawcode}
+
+\begin{trap}
+Race conditions are hard bugs: the code works nine times and fails on the tenth, and adding a
+\code{print} can hide it. \code{counter += 1} looks like one step but is read, add, write. Keep
+shared mutable state to a minimum, protect it with a \code{with lock:} block, or avoid sharing
+by passing data through a \code{Queue}. Forgetting to release a lock (or two locks waiting on
+each other, a \emph{deadlock}) freezes the program; \code{with} releases it for you.
+\end{trap}
+
+\subsubsection*{The GIL}
+
+CPython has a \emph{Global Interpreter Lock}: only one thread at a time may run Python bytecode.
+The consequences are:
+
+\begin{itemize}[nosep]
+  \item Threads waiting on I/O release the lock, so threads \emph{do} help I/O-bound programs.
+  \item Threads doing pure-Python calculation take turns, so they give \emph{no speed-up}, and
+        can even be slower than one thread.
+  \item Processes each have their own interpreter and lock, so they use several cores.
+  \item C extensions such as NumPy release the lock inside long computations.
+  \item Python 3.13 has an experimental build without the GIL. Do not count on it yet.
+\end{itemize}
+
+\begin{center}
+\begin{tikzpicture}[>=Stealth,x=0.5cm]
+  \node[font=\sffamily\footnotesize,anchor=west] at (0,1.1) {Two threads, CPU-bound, with the GIL: they take turns};
+  \foreach \a/\k in {0/1,2/1,4/1,6/1,8/1} \draw[fill=cblue!30,draw=cblue] (\a,0.4) rectangle (\a+1,0.8);
+  \foreach \a in {1,3,5,7} \draw[fill=cgreen!30,draw=cgreen] (\a,0.4) rectangle (\a+1,0.8);
+  \node[font=\sffamily\tiny,anchor=east] at (-0.2,0.6) {one at a time};
+  \node[font=\sffamily\footnotesize,anchor=west] at (0,-0.4) {Two processes, CPU-bound: they run side by side};
+  \draw[fill=cblue!30,draw=cblue] (0,-1.2) rectangle (9,-0.8);
+  \draw[fill=cgreen!30,draw=cgreen] (0,-1.7) rectangle (9,-1.3);
+  \node[font=\sffamily\tiny,anchor=east] at (-0.2,-1.0) {core 1};
+  \node[font=\sffamily\tiny,anchor=east] at (-0.2,-1.5) {core 2};
+  \draw[->,thick,cgray] (0,-2.1) -- (9.8,-2.1) node[right,font=\sffamily\scriptsize]{time};
+  \node[font=\sffamily\scriptsize,anchor=west] at (11,0.6) {same total time as one thread};
+  \node[font=\sffamily\scriptsize,anchor=west] at (11,-1.25) {about half the time};
+\end{tikzpicture}
+\end{center}
+% MD-BEGIN
+% ```text
+% CPU-bound, threads (GIL):    T1 T2 T1 T2 T1 T2 T1 T2    (one at a time, no speed-up)
+% CPU-bound, processes:        core 1: P1 P1 P1 P1 P1 P1
+%                              core 2: P2 P2 P2 P2 P2 P2   (side by side, about half the time)
+% ```
+% MD-END
+
+\begin{gamerule}
+Threads for I/O-bound work. Processes for CPU-bound work. For most AI-engineering scripts
+(calling APIs) threads or \code{asyncio} are right. Use processes when you crunch data in pure
+Python.
+\end{gamerule}
+
+\subsection{concurrent.futures}
+
+Managing threads and processes by hand is fiddly. \code{concurrent.futures} gives one simple
+interface over both: a \emph{pool} of workers, and a \emph{future} for each job that you
+submitted. A future is a receipt: it will hold the result later (or the exception that was
+raised).
+
+\begin{center}
+\begin{tikzpicture}[>=Stealth]
+  \node[c21n=cblue,align=center] (m) at (0,0) {your code\\[-1pt]{\scriptsize\sffamily ex.submit(fn, x)}};
+  \node[c21n=cgold,align=center] (f) at (6,0) {Future\\[-1pt]{\scriptsize\sffamily pending}};
+  \node[c21n=cgreen,align=center] (w) at (12,0) {worker\\[-1pt]{\scriptsize\sffamily runs fn(x)}};
+  \draw[->,thick] (m) -- (f);
+  \draw[->,thick] (f) -- node[above,font=\sffamily\scriptsize]{queued} (w);
+  \draw[->,thick,dashed,cgray,bend left=35] (w.south) to node[below,font=\sffamily\scriptsize]{result stored} (f.south east);
+  \draw[->,thick,dashed,cgray,bend left=35] (f.south west) to node[below,font=\ttfamily\scriptsize]{f.result()} (m.south east);
+\end{tikzpicture}
+\end{center}
+% MD-BEGIN
+% ```mermaid
+% sequenceDiagram
+%     participant Code as your code
+%     participant F as Future
+%     participant W as worker
+%     Code->>F: ex.submit(fn, x)  (returns at once)
+%     F->>W: job queued
+%     W-->>F: result (or exception) stored
+%     Code->>F: f.result()  (waits if not done)
+% ```
+% MD-END
+
+\begin{pycode}
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+def timed(workers):
+    t0 = time.perf_counter()
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        out = list(ex.map(fake_call, range(6)))      # keeps input order
+    return out, time.perf_counter() - t0
+
+t0 = time.perf_counter()
+serial = [fake_call(i) for i in range(6)]
+t_serial = time.perf_counter() - t0
+out3, t3 = timed(3)
+out6, t6 = timed(6)
+print(serial == out3 == out6)
+print(round(t_serial, 1), round(t3, 1), round(t6, 1))
+\end{pycode}
+\begin{rawcode}
+True
+1.2 0.4 0.2
+\end{rawcode}
+
+Six calls of 0.2 s each take about 1.2 s one by one, 0.4 s with three workers (two rounds) and
+0.2 s with six (one round). Your numbers will differ slightly. \code{ex.map} returns the results
+\emph{in input order}. \code{submit} returns a \code{Future} at once, and \code{as\_completed}
+yields futures in the order they \emph{finish}.
+
+\begin{pycode}
+with ThreadPoolExecutor(max_workers=3) as ex:
+    futs = [ex.submit(fake_call, i) for i in range(4)]
+    print(type(futs[0]).__name__, futs[0].done())
+    print(sorted(f.result() for f in as_completed(futs)))
+
+def boom(x):
+    raise ValueError("bad input %d" % x)
+
+with ThreadPoolExecutor(2) as ex:
+    f = ex.submit(boom, 7)
+    try:
+        f.result()                # the worker's exception is raised here
+    except ValueError as e:
+        print("caught:", e)
+\end{pycode}
+\begin{rawcode}
+Future False
+[0, 1, 4, 9]
+caught: bad input 7
+\end{rawcode}
+
+\begin{typecheck}
+\code{ex.submit(...)} returns a \code{Future}, not the result. \code{f.result()} returns the
+function's return value and \emph{re-raises} any exception from the worker, so errors are not
+lost; they appear where you ask for the result. \code{ProcessPoolExecutor} has the same API, but
+the function and its arguments must be picklable, and the start-up needs the \code{\_\_main\_\_}
+guard.
+\end{typecheck}
+
+\subsection{Green threads and gevent}
+
+Another idea is \emph{event-based} programming: one loop watches many waiting tasks and runs
+whichever is ready. The \code{gevent} library does this with \emph{greenlets} (``green threads'')
+and rewrites standard library calls such as \code{socket} (``monkey patching'') so that ordinary-looking
+blocking code yields to others instead of freezing. It is third-party (\code{pip install gevent}),
+not run here, and it only works with pure-Python code, not C libraries that block. It lost ground
+to \code{asyncio}, but you will see it in older servers.
+
+\subsection{Twisted}
+
+\code{Twisted} is an older event-driven networking framework built on \emph{callbacks}: you
+register a function to run when ``data arrives'' or ``connection closed''. It is powerful and
+covers many protocols, but callback code can get tangled as a program grows (\emph{callback
+hell}). New code usually chooses \code{asyncio}. Install with \code{pip install twisted}; not
+needed in this series.
+
+\subsection{asyncio}
+
+\code{asyncio} (standard library) runs many tasks in \emph{one thread}. Tasks cooperate: a task
+runs until it reaches an \code{await}, which says ``I am waiting, someone else can go now''. A
+single \emph{event loop} decides who runs next.
+
+\begin{itemize}[nosep]
+  \item \code{async def f(): ...} defines a \emph{coroutine function}.
+  \item Calling \code{f()} does \emph{not} run it. It returns a \emph{coroutine object}.
+  \item \code{await x} runs a coroutine to completion (inside another coroutine) and gives its result.
+  \item \code{asyncio.run(f())} starts the event loop from normal code and runs \code{f()}.
+  \item \code{asyncio.create\_task(f())} starts \code{f()} in the background, concurrently.
+  \item \code{asyncio.gather(a, b, c)} runs several and returns their results as a list, in order.
+\end{itemize}
+
+\begin{center}
+\begin{tikzpicture}[>=Stealth]
+  \node[c21n=cgold] (c) at (0,0) {fake\_llm("x", 1)};
+  \node[c21n=cpurple,align=center] (co) at (5.2,0) {coroutine object\\[-1pt]{\scriptsize\sffamily nothing has run yet}};
+  \node[c21n=cgreen,align=center] (r) at (10.5,0) {str\\[-1pt]{\scriptsize\sffamily "answer-x"}};
+  \draw[->,thick] (c) -- node[above,font=\sffamily\scriptsize]{call} (co);
+  \draw[->,thick] (co) -- node[above,font=\ttfamily\scriptsize,align=center]{await or\\asyncio.run} (r);
+\end{tikzpicture}
+\end{center}
+% MD-BEGIN
+% ```mermaid
+% flowchart LR
+%     C["fake_llm('x', 1)"] -- "call" --> CO["coroutine object (nothing has run yet)"]
+%     CO -- "await or asyncio.run" --> R["str 'answer-x'"]
+% ```
+% MD-END
+
+\begin{pycode}
+import asyncio
+
+async def fake_llm(name, delay):
+    print("start", name)
+    await asyncio.sleep(delay)        # a fake network wait that lets others run
+    print("done", name)
+    return f"answer-{name}"
+
+c = fake_llm("x", 0)
+print(type(c).__name__)               # nothing has run yet
+print(asyncio.run(c))
+\end{pycode}
+\begin{rawcode}
+coroutine
+start x
+done x
+answer-x
+\end{rawcode}
+
+\begin{typecheck}
+\code{fake\_llm("x", 0)} is a \code{coroutine} object, \emph{not} a \code{str}. The
+\code{str} appears only after \code{await} (or \code{asyncio.run}). Forgetting the \code{await}
+is the number one async bug: Python warns \code{coroutine ... was never awaited} and your code
+silently did nothing.
+\end{typecheck}
+
+Now three fake API calls with different delays, started together.
+
+\begin{pycode}
+async def main():
+    t0 = time.perf_counter()
+    out = await asyncio.gather(fake_llm("a", 0.3), fake_llm("b", 0.1),
+                               fake_llm("c", 0.2))
+    return out, time.perf_counter() - t0
+
+out, elapsed = asyncio.run(main())
+print(out, round(elapsed, 1))
+\end{pycode}
+\begin{rawcode}
+start a
+start b
+start c
+done b
+done c
+done a
+['answer-a', 'answer-b', 'answer-c'] 0.3
+\end{rawcode}
+
+All three started at once. They finished in the order of their delays (b, c, a). The total time is
+about the \emph{longest} delay (0.3 s), not the sum (0.6 s). Yet \code{gather} returned the
+results in the order of the arguments (a, b, c), not the order of finishing.
+
+\begin{center}
+\begin{tikzpicture}[>=Stealth,x=1.1cm]
+  \node[font=\sffamily\footnotesize,anchor=west] at (0,1.0) {The event loop is one lane. It runs whoever is ready:};
+  \foreach \a/\l in {0/a, 1/b, 2/c, 5/a, 6/b, 7/c} \draw[fill=cblue!30,draw=cblue] (\a,0) rectangle (\a+1,0.5) node[midway,font=\ttfamily\tiny]{\l};
+  \draw[fill=cgray!15,draw=cgray] (3,0) rectangle (5,0.5) node[midway,font=\sffamily\tiny]{idle};
+  \draw[->,thick,cgray] (0,-0.3) -- (8.6,-0.3) node[right,font=\sffamily\scriptsize]{time};
+  \node[font=\sffamily\scriptsize,anchor=west] at (0,-0.8) {each letter: that task runs until its next \code{await}; \code{a b c} then resume after their waits};
+\end{tikzpicture}
+\end{center}
+% MD-BEGIN
+% ```text
+% event loop (one thread):  [a][b][c][ idle: all waiting ][a][b][c]
+%                             ^ each runs until its next await; they resume when their wait ends
+% ```
+% MD-END
+
+\subsubsection*{Tasks, timeouts and limits}
+
+\begin{pycode}
+async def with_timeout():
+    try:
+        await asyncio.wait_for(fake_llm("slow", 1.0), timeout=0.1)
+    except asyncio.TimeoutError:
+        print("timed out")
+
+async def limited():
+    sem = asyncio.Semaphore(2)          # at most 2 calls in flight
+    active = peak = 0
+    async def one(i):
+        nonlocal active, peak
+        async with sem:
+            active += 1
+            peak = max(peak, active)
+            await asyncio.sleep(0.05)
+            active -= 1
+    await asyncio.gather(*(one(i) for i in range(6)))
+    return peak
+
+async def collect_errors():
+    async def ok():
+        return 1
+    async def bad():
+        raise RuntimeError("api down")
+    return await asyncio.gather(ok(), bad(), return_exceptions=True)
+
+asyncio.run(with_timeout())
+print(asyncio.run(limited()))
+print(asyncio.run(collect_errors()))
+\end{pycode}
+\begin{rawcode}
+start slow
+timed out
+2
+[1, RuntimeError('api down')]
+\end{rawcode}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+\textbf{Tool} & \textbf{Use it to ...} \\
+\midrule
+\code{asyncio.gather(*coros)} & run many coroutines at once; results in argument order \\
+\code{asyncio.create\_task(coro)} & start one in the background, \code{await} it later \\
+\code{asyncio.TaskGroup()} & structured version (3.11+): all tasks are awaited, and one failure cancels the rest \\
+\code{asyncio.wait\_for(coro, t)} & give up after \code{t} seconds (raises \code{TimeoutError}) \\
+\code{asyncio.Semaphore(n)} & cap how many run at once, for example to respect an API rate limit \\
+\code{asyncio.Queue()} & hand work between coroutines \\
+\code{gather(..., return\_exceptions=True)} & get exceptions as values instead of failing the whole batch \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{trap}
+A normal blocking call inside a coroutine freezes the \emph{whole} event loop, because there is
+only one thread. \code{time.sleep(0.2)} in three coroutines takes 0.6 s in total, not 0.2 s.
+Inside \code{async def}, use \code{await asyncio.sleep}, an async library (for example async SDK
+clients such as \code{AsyncAnthropic}, \code{httpx.AsyncClient}, \code{aiohttp}), or push the blocking
+call to a thread with \code{await asyncio.to\_thread(fn, x)}.
+\end{trap}
+
+\begin{pycode}
+async def blocking():
+    async def bad(n):
+        time.sleep(0.2)               # blocks the loop: no overlap
+        return n
+    t0 = time.perf_counter()
+    await asyncio.gather(bad(1), bad(2), bad(3))
+    return time.perf_counter() - t0
+
+async def threaded():
+    t0 = time.perf_counter()
+    await asyncio.gather(*(asyncio.to_thread(fake_call, n) for n in range(3)))
+    return time.perf_counter() - t0
+
+print(round(asyncio.run(blocking()), 1), round(asyncio.run(threaded()), 1))
+\end{pycode}
+\begin{rawcode}
+0.6 0.2
+\end{rawcode}
+
+\begin{boss}[: await means "let someone else run"]
+Concurrency in \code{asyncio} is \emph{cooperative}. A coroutine runs without interruption until it
+hits an \code{await} on something that actually waits. Three ideas must click together. (1)
+Calling an \code{async def} gives a coroutine object, not a result. (2) \code{await} is both ``give
+me the result'' and ``you may switch away now''. (3) Only \code{await}ed waits overlap; anything
+that blocks the thread, such as \code{time.sleep} or a slow loop, stops everyone. If your async
+program is no faster than the plain one, look for a blocking call or a forgotten \code{gather}:
+\code{await a(); await b()} runs them \emph{one after the other}.
+\end{boss}
+
+\begin{pycode}
+async def sequential():
+    t0 = time.perf_counter()
+    await fake_llm("a", 0.3)
+    await fake_llm("b", 0.1)          # starts only after a is finished
+    return time.perf_counter() - t0
+
+print(round(asyncio.run(sequential()), 1))
+\end{pycode}
+\begin{rawcode}
+start a
+done a
+start b
+done b
+0.4
+\end{rawcode}
+
+\subsection{Asyncio alternatives}
+
+\code{async}/\code{await} is part of the language, and \code{asyncio} is just one event-loop
+library. \code{Trio} and \code{Curio} are alternatives with different designs. \code{Trio} uses
+a ``nursery'' to group tasks, an idea that influenced \code{TaskGroup}. \code{AnyIO}
+offers one API on top of \code{asyncio} and \code{Trio}. Third-party, not needed here.
+
+\subsection{Async versus ...}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X X@{}}
+\toprule
+\textbf{Approach} & \textbf{Strength} & \textbf{Cost or catch} \\
+\midrule
+Processes & use all CPU cores; real isolation & heavy, slow start, data must be pickled \\
+Threads & easy; fine for I/O waits; shared memory & GIL limits CPU work; races and locks \\
+Coroutines (\code{asyncio}) & tiny per task: thousands or more at once; no data races between awaits & needs async libraries; one blocking call stalls all \\
+Green threads (\code{gevent}) & looks like normal code & needs monkey patching; not for C libraries \\
+Callbacks (\code{Twisted}) & mature; fine for network servers & ``inside-out'' code that is hard to follow \\
+Queues (Redis, Celery) & spread work over machines; durable & more moving parts to run \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{center}
+\begin{tikzpicture}[>=Stealth,
+    c21q/.style={draw=cblue,fill=cblue!8,rounded corners=3pt,minimum height=8mm,font=\sffamily\small,inner sep=4pt,align=center},
+    c21a/.style={draw=cgreen,fill=cgreen!12,rounded corners=3pt,minimum height=8mm,font=\sffamily\small\bfseries,inner sep=4pt,align=center}]
+  \node[c21q] (s) at (0,0) {What is the\\program waiting on?};
+  \node[c21q] (io) at (4.6,1.3) {network / disk / API\\(I/O bound)};
+  \node[c21q] (cpu) at (4.6,-1.3) {calculation\\(CPU bound)};
+  \node[c21a] (th) at (11.6,2.3) {threads / thread pool};
+  \node[c21a] (as) at (11.6,0.8) {asyncio};
+  \node[c21a] (pr) at (11.6,-1.3) {processes / process pool};
+  \draw[->,thick] (s.east) -- (io.west);
+  \draw[->,thick] (s.east) -- (cpu.west);
+  \draw[->,thick] (io.east) -- node[above,font=\sffamily\tiny,sloped]{few, simple} (th.west);
+  \draw[->,thick] (io.east) -- node[below,font=\sffamily\tiny,sloped]{many, async libs} (as.west);
+  \draw[->,thick] (cpu.east) -- (pr.west);
+\end{tikzpicture}
+\end{center}
+% MD-BEGIN
+% ```mermaid
+% flowchart LR
+%     S["What is the program waiting on?"] --> IO["network / disk / API (I/O bound)"]
+%     S --> CPU["calculation (CPU bound)"]
+%     IO -- "a few calls, simple" --> TH["threads / thread pool"]
+%     IO -- "many calls, async libs" --> AS["asyncio"]
+%     CPU --> PR["processes / process pool"]
+% ```
+% MD-END
+
+\subsection{Async frameworks and servers}
+
+Async support is spreading through the Python web world. \emph{ASGI} is the async successor of
+WSGI, the standard between web servers and apps. This is where it shows up when you serve a model
+behind an API.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+\textbf{Kind} & \textbf{Examples} \\
+\midrule
+ASGI servers & Uvicorn, Hypercorn \\
+async web frameworks & FastAPI (uses type hints), Starlette, Sanic, Tornado, aiohttp, Quart \\
+async HTTP clients & \code{httpx} (async mode), \code{aiohttp} \\
+async database drivers & asyncpg (Postgres), aiomysql, redis-py's async client \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Redis}
+
+When one machine is not enough, put the queue \emph{outside} the programs, on a server that all
+of them can reach over the network. A Redis list works as a queue: producers \code{rpush} messages,
+workers \code{blpop} (a pop that blocks until a message arrives, with an optional timeout). The
+workers can run on other computers. It needs a Redis server and \code{pip install redis}, so it
+is not run here.
+
+\begin{pycode}
+# needs: a Redis server and  pip install redis   (not run in these notes)
+import redis
+
+conn = redis.Redis()
+
+# producer
+for job in ["salad", "bread", "soup"]:
+    conn.rpush("jobs", job.encode("utf-8"))   # Redis stores bytes
+conn.rpush("jobs", b"quit")                     # sentinel
+
+# worker
+while True:
+    item = conn.blpop("jobs", timeout=20)   # None on timeout, else tuple
+    if item is None or item[1] == b"quit":
+        break
+    print("processed", item[1].decode("utf-8"))
+\end{pycode}
+
+\begin{typecheck}
+Redis returns \code{bytes}, so you \code{.decode("utf-8")} what comes out, exactly as in the Text
+Data chapter. \code{blpop} returns either \code{None} (timed out) or a tuple
+\code{(key, value)}, both \code{bytes}.
+\end{typecheck}
+
+Two ways to end workers: a sentinel (\code{quit}), or a timeout (no message for N seconds means
+stop). Several workers can \code{blpop} from the same list; each message goes to exactly one of
+them.
+
+\subsection{Beyond queues}
+
+More moving parts mean more ways to fail. Typical strategies:
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+\textbf{Strategy} & \textbf{Meaning} \\
+\midrule
+fire and forget & send the job and do not check. Simple, but lost jobs go unnoticed \\
+request and reply & the receiver confirms each job (an acknowledgment) \\
+back pressure (throttling) & a slow stage tells fast stages to slow down, so queues do not grow forever \\
+retry with limits & try again after a failure, a few times, with growing delays \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Ready-made task systems add tracking of pending, running, finished and failed jobs: \code{Celery}
+(distributed tasks, many back ends) and \code{RQ} (simple, Redis-based). If you only need to cap
+how many API calls run at once, an \code{asyncio.Semaphore} is often enough.
+
+% ------------------------------------------------------------
+\section{Review and what comes next}
+
+Processes isolate and use many cores. Threads share memory and suit waiting. \code{asyncio} runs
+many waiting tasks in one thread and needs \code{await}. Pools and queues organize the work. The
+next chapter moves from time to space: networks.
+
+\begin{practice}
+\begin{enumerate}[nosep,leftmargin=*]
+  \item You must call an LLM API for 200 prompts. Is the program I/O bound or CPU bound? Name two
+        tools that would speed it up and one that would not.
+  \item Rewrite \code{[fake\_call(i) for i in range(6)]} with a \code{ThreadPoolExecutor} with
+        four workers. In which order do results arrive with \code{map}? With \code{as\_completed}?
+  \item Why does \code{await a(); await b()} not run the two coroutines at the same time? Show
+        the one-line change that does.
+  \item What is the type of \code{fake\_llm("q", 1)}, and what do you have to do to get a
+        \code{str}?
+  \item Three threads each run \code{counter += 1} 100000 times on a shared global without a
+        lock. Why can the final value be wrong, and what fixes it?
+  \item Start a child process that sleeps for 10 seconds, then stop it after one second. Which
+        calls do you need, and what does \code{exitcode} tell you?
+  \item A program using \code{asyncio.gather} on 50 calls is rate-limited by the API. How do you
+        allow at most 5 calls at a time?
+\end{enumerate}
+\end{practice}
+
+\begin{achievement}{Time Bender}
+\begin{itemize}[nosep,leftmargin=*]
+  \item Tell I/O-bound from CPU-bound work and pick processes, threads or \code{asyncio}.
+  \item Run commands and Python functions in other processes safely.
+  \item Fan out work with \code{concurrent.futures} and collect results and errors.
+  \item Write \code{async}/\code{await} code with \code{gather}, timeouts and a semaphore.
+  \item Pass work between workers with queues and sentinels.
+\end{itemize}
+\end{achievement}
