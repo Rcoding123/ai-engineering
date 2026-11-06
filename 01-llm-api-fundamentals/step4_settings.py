@@ -1,4 +1,4 @@
-﻿"""
+"""
 Step 4 — Settings: system prompt, model and effort from the command line.
 
 Objective:
